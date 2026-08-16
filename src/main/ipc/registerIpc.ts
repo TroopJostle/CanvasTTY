@@ -1,6 +1,6 @@
 import { extname } from "node:path";
 import { readFile, stat } from "node:fs/promises";
-import { BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import type { IpcMainEvent, IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import type {
   AppSettings,
@@ -22,6 +22,7 @@ import type { PluginSecretsService } from "../services/PluginSecretsService";
 import type { BrowserService } from "../services/BrowserService";
 import { normalizePluginBrowserUrl } from "../services/browser/PluginBrowserOpenPolicy";
 import { PluginBrowserOpenBroker } from "./PluginBrowserOpenBroker";
+import type { GithubAuthService } from "../services/GithubAuthService";
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const MEDIA_MIME: Record<string, string> = {
@@ -40,6 +41,7 @@ interface Dependencies {
   pluginMedia: PluginMediaService;
   pluginSecrets: PluginSecretsService;
   browser: BrowserService;
+  githubAuth: GithubAuthService;
   getMainWindow(): BrowserWindow | null;
   applyBrowserSettings(settings: AppSettings): void;
   setCanvasNavigationShortcutCapture(active: boolean): void;
@@ -58,6 +60,7 @@ export function registerIpc({
   pluginMedia,
   pluginSecrets,
   browser,
+  githubAuth,
   getMainWindow,
   applyBrowserSettings,
   setCanvasNavigationShortcutCapture,
@@ -78,6 +81,7 @@ export function registerIpc({
     if (typeof text === "string" && text.length > 0) clipboard.writeText(text);
   });
 
+  ipcMain.handle(IPC.appVersion, () => app.getVersion());
   ipcMain.handle(IPC.settingsGet, () => settings.get());
   ipcMain.handle(IPC.settingsUpdate, async (_event, patch: Partial<AppSettings>) => {
     const next = await settings.update(patch);
@@ -141,6 +145,31 @@ export function registerIpc({
   ipcMain.handle(IPC.limitsGet, () => limits.get());
 
   ipcMain.handle(IPC.pluginsList, () => plugins.list());
+  ipcMain.handle(IPC.pluginsSearch, (_event, query: string) => {
+    if (typeof query !== "string") throw new Error("Search query is required.");
+    return plugins.searchGithubPlugins(query);
+  });
+  ipcMain.handle(IPC.pluginsShowcase, () => plugins.listShowcasePlugins());
+  ipcMain.handle(IPC.pluginsIcon, async (_event, sourceUrls: unknown) => {
+    if (!Array.isArray(sourceUrls) || sourceUrls.some((url) => typeof url !== "string")) {
+      throw new Error("GitHub URLs are required.");
+    }
+    const icons = await plugins.fetchPluginIcons(sourceUrls);
+    return Object.fromEntries(icons);
+  });
+  ipcMain.handle(IPC.pluginsManifests, async (_event, sourceUrls: unknown) => {
+    if (!Array.isArray(sourceUrls) || sourceUrls.some((url) => typeof url !== "string")) {
+      throw new Error("GitHub URLs are required.");
+    }
+    const manifests = await plugins.previewManifests(sourceUrls);
+    return Object.fromEntries(manifests);
+  });
+  ipcMain.handle(IPC.pluginsCheckUpdates, () => plugins.checkForUpdates());
+  ipcMain.handle(IPC.pluginsUpdate, async (_event, pluginId: string) => {
+    if (typeof pluginId !== "string") throw new Error("Plugin identifier is required.");
+    closePluginWindows(pluginId);
+    return plugins.updatePlugin(pluginId);
+  });
   ipcMain.handle(IPC.pluginsPreviewInstall, (_event, sourceUrl: string) => {
     if (typeof sourceUrl !== "string") throw new Error("GitHub URL is required.");
     return plugins.previewInstall(sourceUrl);
@@ -448,6 +477,24 @@ export function registerIpc({
   });
   ipcMain.on(IPC.browserPageWheel, (event, input: unknown) => {
     browser.handlePageWheel(event.sender, input);
+  });
+
+  ipcMain.handle(IPC.githubAuthStatus, () => githubAuth.status());
+  ipcMain.handle(IPC.githubAuthStart, async () => {
+    const flow = await githubAuth.startDeviceFlow();
+    // Do NOT open the browser automatically: the user copies the code by
+    // clicking it and opens the verification link themselves, which is a
+    // single deliberate action (no double alt-tab friction).
+    return {
+      userCode: flow.userCode,
+      verificationUri: flow.verificationUri,
+      interval: flow.interval
+    };
+  });
+  ipcMain.handle(IPC.githubAuthSignOut, () => githubAuth.signOut());
+  ipcMain.handle(IPC.githubAuthOpenUrl, (_event, value: unknown) => {
+    if (typeof value !== "string") throw new Error("URL is required.");
+    return shell.openExternal(safeExternalUrl(value));
   });
 
   ipcMain.handle(IPC.terminalList, () => terminals.list());
