@@ -89,6 +89,30 @@ test("validates all supported contribution shapes and permissions", () => {
   assert.deepEqual(validatePluginManifest(manifest), manifest);
 });
 
+test("runtime manifest validation rejects unknown fields at every schema boundary", () => {
+  assert.throws(
+    () => validatePluginManifest({ ...manifest, surprise: true }),
+    /unknown field: surprise/
+  );
+  assert.throws(
+    () => validatePluginManifest({
+      ...manifest,
+      contributions: [{ ...manifest.contributions[0], surprise: true }]
+    }),
+    /unknown field: surprise/
+  );
+  assert.throws(
+    () => validatePluginManifest({
+      ...manifest,
+      contributions: [{
+        ...manifest.contributions[0],
+        defaultSize: { ...manifest.contributions[0].defaultSize, depth: 2 }
+      }]
+    }),
+    /unknown field: depth/
+  );
+});
+
 test("recognizes browser:open as a distinct plugin permission", () => {
   const browserManifest = { ...manifest, permissions: ["browser:open"] };
   assert.deepEqual(validatePluginManifest(browserManifest), browserManifest);
@@ -310,6 +334,16 @@ test("plugin download retries transient failures but not permanent ones", async 
       /not found or is not public/
     );
     assert.equal(calls, 1);
+
+    globalThis.fetch = async () => {
+      const response = new Response(tarball, { status: 200 });
+      Object.defineProperty(response, "url", { value: "https://example.com/archive.tar.gz" });
+      return response;
+    };
+    await assert.rejects(
+      () => downloadGithubRepository("https://github.com/example/redirected.git", join(directory, "redirected")),
+      /outside GitHub's download hosts/
+    );
   } finally {
     globalThis.fetch = originalFetch;
     await rm(directory, { recursive: true, force: true });
@@ -733,6 +767,45 @@ test("showcase lists only repositories with the canvastty-plugin- prefix", async
   }
 });
 
+test("showcase keeps more than ten real GitHub results for UI pagination", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousToken = process.env.GITHUB_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  const userData = await mkdtemp(join(tmpdir(), "canvastty-plugin-showcase-pages-"));
+  const repositories = Array.from({ length: 11 }, (_value, index) => ({
+    full_name: `example/canvastty-plugin-${index + 1}`,
+    description: `Plugin ${index + 1}`,
+    stargazers_count: index,
+    updated_at: "2026-08-01T00:00:00Z"
+  }));
+  try {
+    globalThis.fetch = async (url) => {
+      const text = String(url);
+      if (text.startsWith("https://api.github.com/search/repositories")) {
+        return Response.json({ items: repositories });
+      }
+      if (text.startsWith("https://api.github.com/repos/")) {
+        return Response.json({ default_branch: "main" });
+      }
+      return new Response("missing", { status: 404 });
+    };
+    const manager = new PluginManager(userData);
+    try {
+      await manager.load();
+      const showcase = await manager.listShowcasePlugins();
+      assert.equal(showcase.length, 11);
+      assert.equal(showcase[10].fullName, "example/canvastty-plugin-11");
+    } finally {
+      await manager.dispose();
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = previousToken;
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
 test("showcase excludes repositories that are already installed", async () => {
   const originalFetch = globalThis.fetch;
   const previousToken = process.env.GITHUB_TOKEN;
@@ -1026,10 +1099,61 @@ test("updatePlugin replaces files and keeps enabled and modules", async () => {
     assert.equal(updated.enabled, true);
     const asset = await manager.protocolResponse("canvastty-plugin://com.example.updateflow/app.html");
     assert.equal(asset.status, 200);
-    // The fork main base predates the upstream canvas-navigation input bridge.
-    assert.equal(await asset.text(), '<h1>v2</h1>');
+    assert.equal(
+      await asset.text(),
+      '<script src="canvastty-plugin://host/input-bridge.js"></script><h1>v2</h1>'
+    );
   } finally {
     globalThis.fetch = originalFetch;
+    await manager.dispose();
+    await rm(userData, { recursive: true, force: true });
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("updatePlugin restores the previous package when metadata persistence fails", async () => {
+  const userData = await mkdtemp(join(tmpdir(), "canvastty-plugin-update-rollback-"));
+  const fixture = await mkdtemp(join(tmpdir(), "canvastty-plugin-update-rollback-fixture-"));
+  let version = "1.0.0";
+  const writeFixture = async () => {
+    await rm(fixture, { recursive: true, force: true });
+    await mkdir(fixture, { recursive: true });
+    await writeFile(join(fixture, "app.html"), `<h1>${version}</h1>`, "utf8");
+    await writeFile(join(fixture, "canvastty.plugin.json"), JSON.stringify({
+      apiVersion: 1,
+      id: "com.example.rollback",
+      name: "Rollback",
+      version,
+      description: "Atomic update rollback fixture.",
+      permissions: [],
+      contributions: [{
+        id: "app",
+        kind: "canvas-app",
+        title: "App",
+        entry: "app.html",
+        defaultSize: { width: 480, height: 300 }
+      }]
+    }), "utf8");
+  };
+  await writeFixture();
+  const manager = new PluginManager(userData, async (_url, destination) => {
+    await cp(fixture, destination, { recursive: true });
+  });
+  try {
+    await manager.load();
+    await manager.install((await manager.previewInstall("https://github.com/example/rollback")).token);
+    version = "2.0.0";
+    await writeFixture();
+    await mkdir(join(userData, "plugin-versions.json.tmp"));
+
+    await assert.rejects(() => manager.updatePlugin("com.example.rollback"));
+    assert.equal(manager.list()[0].manifest.version, "1.0.0");
+    const asset = await manager.protocolResponse("canvastty-plugin://com.example.rollback/app.html");
+    assert.equal(
+      await asset.text(),
+      '<script src="canvastty-plugin://host/input-bridge.js"></script><h1>1.0.0</h1>'
+    );
+  } finally {
     await manager.dispose();
     await rm(userData, { recursive: true, force: true });
     await rm(fixture, { recursive: true, force: true });
@@ -1113,6 +1237,41 @@ test("fetchPluginIcons returns data URLs or null for plugins without icons", asy
   }
 });
 
+test("GraphQL file metadata requests are chunked to eight repositories", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousToken = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = "batch-test-token";
+  const userData = await mkdtemp(join(tmpdir(), "canvastty-plugin-graphql-batch-"));
+  const aliasesPerRequest = [];
+  try {
+    globalThis.fetch = async (url, options) => {
+      if (String(url) !== "https://api.github.com/graphql") {
+        return new Response("missing", { status: 404 });
+      }
+      const body = JSON.parse(String(options?.body ?? "{}"));
+      aliasesPerRequest.push((String(body.query).match(/a\d+:/g) ?? []).length);
+      return Response.json({ data: {} });
+    };
+    const manager = new PluginManager(userData);
+    try {
+      await manager.load();
+      const urls = Array.from({ length: 17 }, (_value, index) => (
+        `https://github.com/example/canvastty-plugin-batch-${index + 1}`
+      ));
+      const manifests = await manager.previewManifests(urls);
+      assert.equal(manifests.size, 0);
+      assert.deepEqual(aliasesPerRequest, [8, 8, 1, 8, 8, 1]);
+    } finally {
+      await manager.dispose();
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = previousToken;
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
 test("platforms: validation accepts canvastty and multi-platform declarations", () => {
   const base = { ...manifest, id: "com.example.platform-ok" };
   const single = validatePluginManifest({ ...base, platforms: ["canvastty"] });
@@ -1129,6 +1288,63 @@ test("platforms: validation rejects empty or malformed declarations", () => {
   assert.throws(() => validatePluginManifest({ ...base, platforms: ["UPPER"] }), /lowercase/);
   assert.throws(() => validatePluginManifest({ ...base, platforms: [42] }), /lowercase/);
   assert.throws(() => validatePluginManifest({ ...base, platforms: ["canvastty ", "canvastty"] }), /lowercase/);
+  assert.throws(() => validatePluginManifest({ ...base, platforms: ["canvastty", "canvastty"] }), /duplicated/);
+});
+
+test("direct install and update enforce platform, while minHostVersion stays informational", async () => {
+  const userData = await mkdtemp(join(tmpdir(), "canvastty-plugin-platform-policy-"));
+  const fixture = await mkdtemp(join(tmpdir(), "canvastty-plugin-platform-policy-fixture-"));
+  let platforms = ["canvastty"];
+  const writeFixture = async (version, minHostVersion = "99.0.0") => {
+    await rm(fixture, { recursive: true, force: true });
+    await mkdir(fixture, { recursive: true });
+    await writeFile(join(fixture, "app.html"), `<h1>${version}</h1>`);
+    await writeFile(join(fixture, "canvastty.plugin.json"), JSON.stringify({
+      apiVersion: 1,
+      id: "com.example.platform-policy",
+      name: "Platform policy",
+      version,
+      description: "Platform policy fixture.",
+      platforms,
+      minHostVersion,
+      permissions: [],
+      contributions: [{
+        id: "app",
+        kind: "canvas-app",
+        title: "App",
+        entry: "app.html",
+        defaultSize: { width: 480, height: 300 }
+      }]
+    }));
+  };
+  await writeFixture("1.0.0");
+  const manager = new PluginManager(userData, async (_url, destination) => {
+    await cp(fixture, destination, { recursive: true });
+  });
+  try {
+    await manager.load();
+    const preview = await manager.previewInstall("https://github.com/example/platform-policy");
+    assert.equal(preview.manifest.minHostVersion, "99.0.0");
+    await manager.install(preview.token);
+
+    platforms = ["another-host"];
+    await writeFixture("2.0.0");
+    await assert.rejects(
+      () => manager.updatePlugin("com.example.platform-policy"),
+      /does not support the canvastty platform/
+    );
+    assert.equal(manager.list()[0].manifest.version, "1.0.0");
+
+    await manager.uninstall("com.example.platform-policy");
+    await assert.rejects(
+      () => manager.previewInstall("https://github.com/example/platform-policy"),
+      /does not support the canvastty platform/
+    );
+  } finally {
+    await manager.dispose();
+    await rm(userData, { recursive: true, force: true });
+    await rm(fixture, { recursive: true, force: true });
+  }
 });
 
 test("minHostVersion: validation accepts semver and rejects malformed", () => {

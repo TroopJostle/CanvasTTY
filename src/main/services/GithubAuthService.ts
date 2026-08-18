@@ -1,22 +1,9 @@
-import { safeStorage } from "electron";
-import { readFile, writeFile, mkdir, rm } from "fs/promises";
-import { join, dirname } from "path";
+import { randomUUID } from "node:crypto";
+import * as electron from "electron";
+import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
+import { join, dirname } from "node:path";
 
-/**
- * GitHub OAuth Device Flow for the plugin showcase.
- *
- * The user authorizes once through github.com/login/device (a short code, no
- * sensitive token ever touches the clipboard or settings UI). We store the
- * resulting refresh token in an OS-encrypted blob (Electron safeStorage) and
- * transparently refresh the short-lived access token (8h) whenever a request
- * needs it — so the user only re-authorizes when the refresh token itself
- * expires (6 months) or they revoke access on GitHub.
- *
- * The OAuth client_id is public by design (like every desktop OAuth app); the
- * client_secret is NOT needed for the device flow, so nothing secret ships in
- * the app. client_id comes from GITHUB_OAUTH_CLIENT_ID / CANVASTTY_GITHUB_CLIENT_ID
- * or an app setting.
- */
+/** GitHub OAuth Device Flow for the plugin showcase. */
 
 export interface GithubAuthStatus {
   authorized: boolean;
@@ -26,39 +13,34 @@ export interface GithubAuthStatus {
 
 interface StoredTokens {
   accessToken: string;
-  refreshToken: string;
-  expiresAt: number; // ms epoch
+  refreshToken: string | null;
+  expiresAt: number | null;
   login: string;
 }
 
-interface DeviceCodeResponse {
-  device_code: string;
-  user_code: string;
-  verification_uri: string;
-  expires_in: number;
-  interval: number;
+interface SafeStorageLike {
+  isEncryptionAvailable(): boolean;
+  encryptString(value: string): Buffer;
+  decryptString(value: Buffer): string;
 }
 
-interface TokenResponse {
-  access_token?: string;
-  refresh_token?: string;
-  expires_in?: number;
-  error?: string;
-  error_description?: string;
+export interface GithubAuthServiceOptions {
+  fetcher?: typeof fetch;
+  safeStorage?: SafeStorageLike;
+  now?: () => number;
+  delay?: (durationMs: number, signal: AbortSignal) => Promise<void>;
+  requestTimeoutMs?: number;
+  pollTimeoutMs?: number;
 }
 
 const AUTH_STORE_FILE = "github-oauth.json";
-// GitHub device flow allows up to 15 minutes before the code expires; the
-// token poll must stay alive for the whole window, not just the first 30s.
 const DEVICE_POLL_TIMEOUT_MS = 15 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
- * The OAuth client id of this CanvasTTY build. It is PUBLIC by design
- * (like every desktop OAuth app) — it identifies the app to GitHub and
- * requires no secret with the device flow. Override via env for forks:
- * GITHUB_OAUTH_CLIENT_ID / CANVASTTY_GITHUB_CLIENT_ID.
+ * Public OAuth app identifier for official builds. Forks can set either
+ * GITHUB_OAUTH_CLIENT_ID or CANVASTTY_GITHUB_CLIENT_ID at runtime/build time.
  */
-// Replace with your own OAuth App client_id (GitHub → Settings → Developer settings → OAuth Apps).
 const DEFAULT_OAUTH_CLIENT_ID = "";
 
 export class GithubAuthService {
@@ -66,64 +48,72 @@ export class GithubAuthService {
   private tokens: StoredTokens | null = null;
   private readonly clientId: string;
   private refreshPromise: Promise<string | null> | null = null;
+  private readonly fetcher: typeof fetch;
+  private readonly secureStorage: SafeStorageLike | null;
+  private readonly now: () => number;
+  private readonly wait: (durationMs: number, signal: AbortSignal) => Promise<void>;
+  private readonly requestTimeoutMs: number;
+  private readonly pollTimeoutMs: number;
+  private generation = 0;
+  private deviceFlow: { generation: number; controller: AbortController } | null = null;
+  private storeWrite = Promise.resolve();
 
-  constructor(userDataPath: string, clientId?: string) {
+  constructor(userDataPath: string, clientId?: string, options: GithubAuthServiceOptions = {}) {
     this.storePath = join(userDataPath, AUTH_STORE_FILE);
     this.clientId = clientId
       ?? process.env.GITHUB_OAUTH_CLIENT_ID
       ?? process.env.CANVASTTY_GITHUB_CLIENT_ID
       ?? DEFAULT_OAUTH_CLIENT_ID;
+    this.fetcher = options.fetcher ?? globalThis.fetch;
+    this.secureStorage = options.safeStorage ?? electron.safeStorage ?? null;
+    this.now = options.now ?? Date.now;
+    this.wait = options.delay ?? abortableDelay;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.pollTimeoutMs = options.pollTimeoutMs ?? DEVICE_POLL_TIMEOUT_MS;
   }
 
   get clientConfigured(): boolean {
     return this.clientId.length > 0;
   }
 
-  /** Effective client id for the current build (env override wins). */
-  private effectiveClientId(): string {
-    return this.clientId;
-  }
-
-  /** Loads stored (encrypted) tokens from disk. Call once at startup. */
   async load(): Promise<void> {
     try {
       const raw = await readFile(this.storePath, "utf8");
       const parsed: unknown = JSON.parse(raw);
       if (!isRecord(parsed) || typeof parsed.data !== "string") return;
-      if (!safeStorage.isEncryptionAvailable()) {
+      if (!this.secureStorage?.isEncryptionAvailable()) {
         console.warn("CanvasTTY GitHub OAuth: OS keychain unavailable; stored session skipped.");
         return;
       }
-      const decrypted = safeStorage.decryptString(Buffer.from(parsed.data, "base64"));
+      const decrypted = this.secureStorage.decryptString(Buffer.from(parsed.data, "base64"));
       const tokens: unknown = JSON.parse(decrypted);
       if (!isRecord(tokens)) return;
       const accessToken = typeof tokens.accessToken === "string" ? tokens.accessToken : null;
       const refreshToken = typeof tokens.refreshToken === "string" ? tokens.refreshToken : null;
-      const expiresAt = typeof tokens.expiresAt === "number" ? tokens.expiresAt : 0;
+      const expiresAt = typeof tokens.expiresAt === "number" && Number.isFinite(tokens.expiresAt)
+        ? tokens.expiresAt
+        : null;
       const login = typeof tokens.login === "string" ? tokens.login : null;
-      if (!accessToken || !refreshToken || !login) return;
+      if (!accessToken || !login) return;
       this.tokens = { accessToken, refreshToken, expiresAt, login };
     } catch (error) {
-      // Corrupt or missing store — start signed out.
       if (!isMissingFile(error)) {
         console.warn("CanvasTTY GitHub OAuth session could not be restored.", error);
       }
     }
   }
 
-  /**
-   * Returns a valid access token, refreshing it transparently if expired.
-   * Returns null when signed out or refresh fails (expired/revoked).
-   */
   async getToken(): Promise<string | null> {
-    if (!this.tokens) return null;
-    if (Date.now() < this.tokens.expiresAt - 60_000) {
-      return this.tokens.accessToken;
-    }
-    // Refresh is idempotent across concurrent callers.
+    const current = this.tokens;
+    if (!current) return null;
+    if (current.expiresAt === null || this.now() < current.expiresAt - 60_000) return current.accessToken;
+    if (!current.refreshToken) return null;
     if (!this.refreshPromise) {
-      this.refreshPromise = this.refreshAccessToken().finally(() => {
-        this.refreshPromise = null;
+      const generation = this.generation;
+      const refresh = this.refreshAccessToken(current, generation);
+      this.refreshPromise = refresh;
+      void refresh.finally(() => {
+        if (this.refreshPromise === refresh) this.refreshPromise = null;
       });
     }
     return this.refreshPromise;
@@ -134,176 +124,262 @@ export class GithubAuthService {
     return { authorized: true, login: this.tokens.login, tokenExpiresAt: this.tokens.expiresAt };
   }
 
-  /**
-   * Starts the device flow. Returns the user-facing code + verification URL.
-   * Throws if the client is not configured.
-   */
   async startDeviceFlow(): Promise<{ userCode: string; verificationUri: string; interval: number }> {
     if (!this.clientConfigured) {
       throw new Error("GitHub OAuth is not configured (missing client id).");
     }
-    const body = new URLSearchParams({
-      client_id: this.effectiveClientId(),
-      scope: "read:user"
-    });
-    const response = await fetch("https://github.com/login/device/code", {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/x-www-form-urlencoded",
-        "user-agent": "CanvasTTY plugin showcase"
-      },
-      body: body.toString()
-    });
-    if (!response.ok) {
-      throw new Error(`GitHub device flow failed with HTTP ${response.status}.`);
-    }
-    const payload: unknown = await response.json();
-    if (!isRecord(payload) || typeof payload.device_code !== "string" || typeof payload.user_code !== "string") {
-      throw new Error("GitHub device flow returned an invalid response.");
-    }
-    const deviceCode = payload.device_code as string;
-    const userCode = payload.user_code as string;
-    const verificationUri = typeof payload.verification_uri === "string" ? payload.verification_uri : "https://github.com/login/device";
-    const interval = typeof payload.interval === "number" && payload.interval > 0 ? payload.interval : 5;
 
-    // Poll in the background; resolves when the user authorizes in the browser.
-    void this.pollDeviceCode(deviceCode, interval).catch((error) => {
-      console.warn("CanvasTTY GitHub OAuth device poll failed.", error);
-    });
+    this.cancelDeviceFlow();
+    const generation = ++this.generation;
+    const controller = new AbortController();
+    this.deviceFlow = { generation, controller };
 
-    return { userCode, verificationUri, interval };
+    try {
+      const body = new URLSearchParams({ client_id: this.clientId });
+      const response = await this.request("https://github.com/login/device/code", {
+        method: "POST",
+        headers: oauthHeaders(),
+        body: body.toString()
+      }, controller.signal);
+      if (!response.ok) throw new Error(`GitHub device flow failed with HTTP ${response.status}.`);
+      const payload: unknown = await response.json();
+      if (!isRecord(payload) || typeof payload.device_code !== "string" || typeof payload.user_code !== "string") {
+        throw new Error("GitHub device flow returned an invalid response.");
+      }
+      if (!this.isCurrentFlow(generation, controller.signal)) throw abortedError();
+
+      const deviceCode = payload.device_code;
+      const userCode = payload.user_code;
+      const verificationUri = githubVerificationUri(payload.verification_uri);
+      const interval = typeof payload.interval === "number" && payload.interval > 0 ? payload.interval : 5;
+
+      void this.pollDeviceCode(deviceCode, interval, generation, controller.signal)
+        .catch((error) => {
+          if (!isAbortError(error)) console.warn("CanvasTTY GitHub OAuth device poll failed.", error);
+        })
+        .finally(() => {
+          if (this.deviceFlow?.generation === generation) this.deviceFlow = null;
+        });
+
+      return { userCode, verificationUri, interval };
+    } catch (error) {
+      if (this.deviceFlow?.generation === generation) this.deviceFlow = null;
+      throw error;
+    }
   }
 
-  /** Removes the stored session. */
   async signOut(): Promise<void> {
+    this.generation += 1;
+    this.cancelDeviceFlow();
     this.tokens = null;
     this.refreshPromise = null;
-    try {
-      await rm(this.storePath);
-    } catch {
-      // Already gone.
-    }
+    await this.enqueueStoreWrite(async () => {
+      await rm(this.storePath, { force: true });
+    });
   }
 
-  private async pollDeviceCode(deviceCode: string, interval: number): Promise<void> {
-    const started = Date.now();
-    while (Date.now() - started < DEVICE_POLL_TIMEOUT_MS) {
-      await new Promise((resolve) => setTimeout(resolve, interval * 1000));
+  private cancelDeviceFlow(): void {
+    this.deviceFlow?.controller.abort();
+    this.deviceFlow = null;
+  }
+
+  private isCurrentFlow(generation: number, signal: AbortSignal): boolean {
+    return !signal.aborted && this.generation === generation && this.deviceFlow?.generation === generation;
+  }
+
+  private async pollDeviceCode(
+    deviceCode: string,
+    initialInterval: number,
+    generation: number,
+    signal: AbortSignal
+  ): Promise<void> {
+    const started = this.now();
+    let interval = initialInterval;
+    while (this.now() - started < this.pollTimeoutMs) {
+      await this.wait(interval * 1000, signal);
+      if (!this.isCurrentFlow(generation, signal)) return;
+
       const body = new URLSearchParams({
-        client_id: this.effectiveClientId(),
+        client_id: this.clientId,
         device_code: deviceCode,
         grant_type: "urn:ietf:params:oauth:grant-type:device_code"
       });
-      const response = await fetch("https://github.com/login/oauth/access_token", {
+      const response = await this.request("https://github.com/login/oauth/access_token", {
         method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/x-www-form-urlencoded",
-          "user-agent": "CanvasTTY plugin showcase"
-        },
+        headers: oauthHeaders(),
         body: body.toString()
-      });
+      }, signal);
       if (!response.ok) continue;
       const payload: unknown = await response.json();
       if (!isRecord(payload)) continue;
       if (payload.error === "authorization_pending" || payload.error === "slow_down") {
-        // RFC 8628 §3.5: on slow_down the client MUST increase the polling
-        // interval by 5 seconds. GitHub does not return an interval in the
-        // error payload, so the increase is client-side and sticks for all
-        // subsequent polls in this loop.
         if (payload.error === "slow_down") interval += 5;
         continue;
       }
-      if (payload.error === "access_denied" || payload.error === "expired_token") {
-        return;
-      }
-      if (typeof payload.access_token === "string" && typeof payload.refresh_token === "string") {
-        const login = await this.fetchLogin(payload.access_token);
-        if (!login) return;
-        const expiresIn = typeof payload.expires_in === "number" && payload.expires_in > 0 ? payload.expires_in : 8 * 3600;
-        this.tokens = {
+      if (payload.error === "access_denied" || payload.error === "expired_token") return;
+      if (typeof payload.access_token === "string") {
+        const login = await this.fetchLogin(payload.access_token, signal);
+        if (!login || !this.isCurrentFlow(generation, signal)) return;
+        const expiresIn = typeof payload.expires_in === "number" && payload.expires_in > 0
+          ? payload.expires_in
+          : null;
+        const next: StoredTokens = {
           accessToken: payload.access_token,
-          refreshToken: payload.refresh_token,
-          expiresAt: Date.now() + expiresIn * 1000,
+          refreshToken: typeof payload.refresh_token === "string" ? payload.refresh_token : null,
+          expiresAt: expiresIn === null ? null : this.now() + expiresIn * 1000,
           login
         };
-        await this.persist();
+        this.tokens = next;
+        await this.persist(next, generation);
         return;
       }
-      // Unknown error — stop polling.
       return;
     }
   }
 
-  private async refreshAccessToken(): Promise<string | null> {
-    if (!this.tokens) return null;
+  private async refreshAccessToken(expected: StoredTokens, generation: number): Promise<string | null> {
+    if (!expected.refreshToken) return null;
     const body = new URLSearchParams({
-      client_id: this.effectiveClientId(),
+      client_id: this.clientId,
       grant_type: "refresh_token",
-      refresh_token: this.tokens.refreshToken
+      refresh_token: expected.refreshToken
     });
     try {
-      const response = await fetch("https://github.com/login/oauth/access_token", {
+      const response = await this.request("https://github.com/login/oauth/access_token", {
         method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/x-www-form-urlencoded",
-          "user-agent": "CanvasTTY plugin showcase"
-        },
+        headers: oauthHeaders(),
         body: body.toString()
       });
       if (!response.ok) return null;
       const payload: unknown = await response.json();
       if (!isRecord(payload) || typeof payload.access_token !== "string") return null;
-      const accessToken = payload.access_token as string;
-      const refreshToken = typeof payload.refresh_token === "string" ? payload.refresh_token : this.tokens.refreshToken;
-      const expiresIn = typeof payload.expires_in === "number" && payload.expires_in > 0 ? payload.expires_in : 8 * 3600;
-      this.tokens = {
-        ...this.tokens,
+      if (this.generation !== generation || this.tokens !== expected) return null;
+      const accessToken = payload.access_token;
+      const refreshToken = typeof payload.refresh_token === "string" ? payload.refresh_token : expected.refreshToken;
+      const expiresIn = typeof payload.expires_in === "number" && payload.expires_in > 0 ? payload.expires_in : null;
+      const next: StoredTokens = {
+        ...expected,
         accessToken,
         refreshToken,
-        expiresAt: Date.now() + expiresIn * 1000
+        expiresAt: expiresIn === null ? null : this.now() + expiresIn * 1000
       };
-      await this.persist();
-      return accessToken;
+      this.tokens = next;
+      await this.persist(next, generation);
+      return this.generation === generation && this.tokens === next ? accessToken : null;
     } catch {
       return null;
     }
   }
 
-  private async fetchLogin(accessToken: string): Promise<string | null> {
+  private async fetchLogin(accessToken: string, signal: AbortSignal): Promise<string | null> {
     try {
-      const response = await fetch("https://api.github.com/user", {
+      const response = await this.request("https://api.github.com/user", {
         headers: {
           authorization: `Bearer ${accessToken}`,
           accept: "application/vnd.github+json",
           "user-agent": "CanvasTTY plugin showcase"
         }
-      });
+      }, signal);
       if (!response.ok) return null;
       const payload: unknown = await response.json();
-      if (!isRecord(payload) || typeof payload.login !== "string") return null;
-      return payload.login;
-    } catch {
+      return isRecord(payload) && typeof payload.login === "string" ? payload.login : null;
+    } catch (error) {
+      if (isAbortError(error)) throw error;
       return null;
     }
   }
 
-  private async persist(): Promise<void> {
-    if (!this.tokens) return;
+  private async request(input: string, init: RequestInit, externalSignal?: AbortSignal): Promise<Response> {
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    if (externalSignal?.aborted) controller.abort();
+    else externalSignal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    timer.unref();
     try {
-      await mkdir(dirname(this.storePath), { recursive: true });
-      if (!safeStorage.isEncryptionAvailable()) {
-        console.warn("CanvasTTY GitHub OAuth: OS keychain unavailable; session not persisted.");
-        return;
-      }
-      const encrypted = safeStorage.encryptString(JSON.stringify(this.tokens));
-      await writeFile(this.storePath, JSON.stringify({ data: encrypted.toString("base64") }), { mode: 0o600 });
-    } catch (error) {
-      console.warn("CanvasTTY GitHub OAuth session could not be persisted.", error);
+      return await this.fetcher(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", abort);
     }
   }
+
+  private async persist(tokens: StoredTokens, generation: number): Promise<void> {
+    await this.enqueueStoreWrite(async () => {
+      if (this.generation !== generation || this.tokens !== tokens) return;
+      try {
+        await mkdir(dirname(this.storePath), { recursive: true });
+        if (!this.secureStorage?.isEncryptionAvailable()) {
+          console.warn("CanvasTTY GitHub OAuth: OS keychain unavailable; session not persisted.");
+          return;
+        }
+        const encrypted = this.secureStorage.encryptString(JSON.stringify(tokens));
+        const temporaryPath = `${this.storePath}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temporaryPath, JSON.stringify({ data: encrypted.toString("base64") }), { mode: 0o600 });
+          if (this.generation === generation && this.tokens === tokens) {
+            await rename(temporaryPath, this.storePath);
+          }
+        } finally {
+          await rm(temporaryPath, { force: true });
+        }
+      } catch (error) {
+        console.warn("CanvasTTY GitHub OAuth session could not be persisted.", error);
+      }
+    });
+  }
+
+  private enqueueStoreWrite(operation: () => Promise<void>): Promise<void> {
+    const next = this.storeWrite.catch(() => undefined).then(operation);
+    this.storeWrite = next;
+    return next;
+  }
+}
+
+function oauthHeaders(): Record<string, string> {
+  return {
+    accept: "application/json",
+    "content-type": "application/x-www-form-urlencoded",
+    "user-agent": "CanvasTTY plugin showcase"
+  };
+}
+
+function githubVerificationUri(value: unknown): string {
+  if (typeof value !== "string") return "https://github.com/login/device";
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "github.com" && url.pathname === "/login/device"
+      ? url.toString()
+      : "https://github.com/login/device";
+  } catch {
+    return "https://github.com/login/device";
+  }
+}
+
+function abortableDelay(durationMs: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(abortedError());
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, durationMs);
+    const abort = (): void => {
+      clearTimeout(timer);
+      reject(abortedError());
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function abortedError(): DOMException {
+  return new DOMException("GitHub OAuth operation was cancelled.", "AbortError");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

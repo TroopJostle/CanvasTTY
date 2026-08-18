@@ -55,7 +55,6 @@ const REGISTRY_FILE = "plugins.json";
 const VERSIONS_FILE = "plugin-versions.json";
 const SEARCH_MAX_RESULTS = 10;
 const SEARCH_TIMEOUT_MS = 15_000;
-const UPDATE_CHECK_CONCURRENCY = 3;
 const PREVIEW_TTL_MS = 10 * 60_000;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const DOWNLOAD_ATTEMPTS = 3;
@@ -221,6 +220,7 @@ export class PluginManager {
       await this.downloadRepository(canonicalUrl, packageRoot);
       await inspectPackage(packageRoot);
       let manifest = await readManifest(packageRoot);
+      assertPlatformCompatible(manifest);
       if (this.plugins.has(manifest.id)) {
         throw new Error(`Plugin ${manifest.id} is already installed.`);
       }
@@ -542,31 +542,46 @@ export class PluginManager {
   async updatePlugin(pluginId: string): Promise<InstalledPlugin> {
     const plugin = this.requirePlugin(pluginId);
     const sourceUrl = plugin.sourceUrl;
-    const enabled = plugin.enabled;
     const previousSelection = [...plugin.selectedModules];
     const directory = await mkdtemp(join(this.stagingRoot, "update-"));
     const packageRoot = join(directory, "repository");
+    const nextRoot = join(directory, "next");
+    const currentRoot = join(this.pluginRoot, pluginId);
+    const backupRoot = join(directory, "previous");
+    let currentBackedUp = false;
+    let swapped = false;
     try {
       await this.downloadFullRepository(sourceUrl, packageRoot);
       await inspectPackage(packageRoot);
       const manifest = await readManifest(packageRoot);
       if (manifest.id !== pluginId) throw new Error("Updated plugin package does not match the installed plugin.");
+      assertPlatformCompatible(manifest);
       const selected = normalizeSelectedModules(manifest, previousSelection);
-      const destination = join(this.pluginRoot, pluginId);
-      const backupRoot = join(directory, "previous");
       if (manifest.modules?.length) {
-        await materializeModularPackage(sourceUrl, packageRoot, destination, manifest, selected, this.downloadModuleFiles);
+        await materializeModularPackage(sourceUrl, packageRoot, nextRoot, manifest, selected, this.downloadModuleFiles);
       } else {
-        await rm(destination, { recursive: true, force: true });
-        await rename(packageRoot, destination);
+        await rename(packageRoot, nextRoot);
       }
-      this.plugins.set(pluginId, {
+
+      await rename(currentRoot, backupRoot);
+      currentBackedUp = true;
+      try {
+        await rename(nextRoot, currentRoot);
+        swapped = true;
+      } catch (error) {
+        await rename(backupRoot, currentRoot);
+        currentBackedUp = false;
+        throw error;
+      }
+
+      const updated: InstalledPlugin = {
         manifest,
         sourceUrl,
-        enabled,
+        enabled: plugin.enabled,
         installedAt: plugin.installedAt,
         selectedModules: selected
-      });
+      };
+      this.plugins.set(pluginId, updated);
       await this.persistRegistry();
       const versions = await this.readVersions();
       versions[pluginId] = {
@@ -575,9 +590,19 @@ export class PluginManager {
         checkedAt: Date.now()
       };
       await this.persistVersions(versions);
-      return structuredClone(activePlugin(this.plugins.get(pluginId)!));
+      return structuredClone(activePlugin(updated));
     } catch (error) {
-      await rm(directory, { recursive: true, force: true });
+      if (currentBackedUp) {
+        this.plugins.set(pluginId, plugin);
+        try {
+          if (swapped) await rm(currentRoot, { recursive: true, force: true });
+          await rename(backupRoot, currentRoot);
+          currentBackedUp = false;
+          await this.persistRegistry();
+        } catch (rollbackError) {
+          throw new AggregateError([error, rollbackError], `Plugin ${pluginId} update failed and could not be rolled back.`);
+        }
+      }
       throw error;
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -807,6 +832,11 @@ function repositoryKeyOfUrl(value: string): string {
 
 export function validatePluginManifest(candidate: unknown): PluginManifest {
   if (!isRecord(candidate)) throw new Error("Plugin manifest must be a JSON object.");
+  assertOnlyKeys(candidate, [
+    "apiVersion", "id", "name", "version", "description", "description.ru", "description.en",
+    "icon", "author", "homepage", "settingsContribution", "coreFiles", "modules", "permissions",
+    "contributions", "platforms", "minHostVersion"
+  ], "Plugin manifest");
   if (candidate.apiVersion !== PLUGIN_API_VERSION) {
     throw new Error(`Plugin apiVersion must be ${PLUGIN_API_VERSION}.`);
   }
@@ -835,7 +865,8 @@ export function validatePluginManifest(candidate: unknown): PluginManifest {
       if (typeof platform !== "string" || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(platform)) {
         throw new Error("Plugin platform ids must be lowercase, alphanumeric with hyphens.");
       }
-      if (!platforms.includes(platform)) platforms.push(platform);
+      if (platforms.includes(platform)) throw new Error(`Plugin platform id is duplicated: ${platform}.`);
+      platforms.push(platform);
     }
   }
 
@@ -914,6 +945,9 @@ export function validatePluginManifest(candidate: unknown): PluginManifest {
 
 function validateContribution(value: unknown): PluginContribution {
   if (!isRecord(value)) throw new Error("Every plugin contribution must be an object.");
+  assertOnlyKeys(value, [
+    "id", "kind", "title", "description", "entry", "icon", "module", "defaultSize", "minSize"
+  ], "Plugin contribution");
   const id = requiredString(value.id, "contribution id", 64);
   if (!isContributionId(id)) throw new Error("Contribution id contains unsupported characters.");
   const title = requiredString(value.title, "contribution title", 80);
@@ -1068,6 +1102,13 @@ async function downloadGithubRepositoryOnce(sourceUrl: string, destination: stri
       if (controller.signal.aborted) throw new TransientGithubDownloadError("GitHub plugin download timed out.");
       throw new TransientGithubDownloadError("GitHub plugin download could not establish a connection.", { cause: error });
     }
+    const finalUrl = new URL(response.url || `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/tarball`);
+    if (
+      finalUrl.protocol !== "https:"
+      || (finalUrl.hostname !== "api.github.com" && finalUrl.hostname !== "codeload.github.com")
+    ) {
+      throw new Error("GitHub plugin archive redirected outside GitHub's download hosts.");
+    }
     if (response.status === 404) throw new Error("GitHub repository was not found or is not public.");
     if (!response.ok || !response.body) {
       const message = `GitHub download failed with HTTP ${response.status}.`;
@@ -1187,6 +1228,7 @@ function validateGridSize(value: unknown): { columns: number; rows: number } {
   if (!isRecord(value) || !Number.isInteger(value.columns) || !Number.isInteger(value.rows)) {
     throw new Error("Home widget defaultSize must contain integer columns and rows.");
   }
+  assertOnlyKeys(value, ["columns", "rows"], "Home widget defaultSize");
   const columns = value.columns as number;
   const rows = value.rows as number;
   if (columns < 1 || columns > HOME_GRID_MAX_COLUMNS || rows < 1 || rows > HOME_GRID_MAX_ROWS) {
@@ -1411,7 +1453,6 @@ function mapSearchResults(results: GithubSearchItem[]): GithubPluginSearchResult
       stars: Number(item.stargazers_count ?? 0),
       updatedAt: String(item.updated_at ?? "")
     });
-    if (entries.length >= SEARCH_MAX_RESULTS) break;
   }
   return entries;
 }
@@ -1583,21 +1624,38 @@ async function githubGraphqlBatch(
   if (!token) {
     // No token: GraphQL is unavailable. Fall back to one raw fetch per entry
     // (still avoids the repository-metadata round trip via cached metadata).
-    await Promise.all(entries.map(async (entry) => {
-      try {
-        const sourceUrl = `https://github.com/${encodeURIComponent(entry.owner)}/${encodeURIComponent(entry.repository)}`;
-        const metadata = await githubRepositoryMetadata(sourceUrl);
-        const url = githubRawUrl(entry.owner, entry.repository, metadata.branch, entry.path);
-        const content = await fetchBoundedGithubFile(url, entry.maximumBytes);
-        results.set(entry.key, entry.asDataUrl
-          ? { ok: true, dataUrl: `data:${mimeForPath(entry.path)};base64,${content.toString("base64")}` }
-          : { ok: true, text: content.toString("utf8") });
-      } catch {
-        results.set(entry.key, { ok: false, missing: true });
-      }
-    }));
+    for (let offset = 0; offset < entries.length; offset += GITHUB_GRAPHQL_BATCH_LIMIT) {
+      const chunk = entries.slice(offset, offset + GITHUB_GRAPHQL_BATCH_LIMIT);
+      await Promise.all(chunk.map(async (entry) => {
+        try {
+          const sourceUrl = `https://github.com/${encodeURIComponent(entry.owner)}/${encodeURIComponent(entry.repository)}`;
+          const metadata = await githubRepositoryMetadata(sourceUrl);
+          const url = githubRawUrl(entry.owner, entry.repository, metadata.branch, entry.path);
+          const content = await fetchBoundedGithubFile(url, entry.maximumBytes);
+          results.set(entry.key, entry.asDataUrl
+            ? { ok: true, dataUrl: `data:${mimeForPath(entry.path)};base64,${content.toString("base64")}` }
+            : { ok: true, text: content.toString("utf8") });
+        } catch {
+          results.set(entry.key, { ok: false, missing: true });
+        }
+      }));
+    }
     return results;
   }
+
+  for (let offset = 0; offset < entries.length; offset += GITHUB_GRAPHQL_BATCH_LIMIT) {
+    const chunk = entries.slice(offset, offset + GITHUB_GRAPHQL_BATCH_LIMIT);
+    const chunkResults = await githubGraphqlBatchWithToken(chunk, token);
+    for (const [key, result] of chunkResults) results.set(key, result);
+  }
+  return results;
+}
+
+async function githubGraphqlBatchWithToken(
+  entries: Array<{ key: string; owner: string; repository: string; path: string; maximumBytes: number; asDataUrl: boolean }>,
+  token: string
+): Promise<Map<string, GithubBlobResult>> {
+  const results = new Map<string, GithubBlobResult>();
 
   // Batched GraphQL: one HTTP request, N repository(file) nodes.
   const aliases: string[] = [];
@@ -1811,6 +1869,7 @@ function validateModules(value: unknown): PluginModule[] {
   const ids = new Set<string>();
   return value.map((candidate) => {
     if (!isRecord(candidate)) throw new Error("Every plugin module must be an object.");
+    assertOnlyKeys(candidate, ["id", "title", "description", "defaultSelected", "permissions", "files"], "Plugin module");
     const id = requiredString(candidate.id, "module id", 64);
     if (!isContributionId(id) || ids.has(id)) throw new Error(`Plugin module id is invalid or duplicated: ${id}.`);
     ids.add(id);
@@ -1861,6 +1920,7 @@ function validateModuleFiles(value: unknown, label: string): PluginModuleAsset[]
   let totalBytes = 0;
   return value.map((candidate) => {
     if (!isRecord(candidate)) throw new Error(`Every plugin ${label} entry must be an object.`);
+    assertOnlyKeys(candidate, ["path", "bytes", "sha256"], `Plugin ${label} entry`);
     const path = assetPath(requiredString(candidate.path, `${label} path`, 180));
     if (MANIFEST_CANDIDATES.includes(path) || seen.has(path)) throw new Error(`Plugin module asset is invalid or duplicated: ${path}.`);
     seen.add(path);
@@ -1885,6 +1945,7 @@ function validateWindowSize(
   if (!isRecord(value) || !Number.isFinite(value.width) || !Number.isFinite(value.height)) {
     throw new Error(`Plugin window ${label} must contain a finite width and height.`);
   }
+  assertOnlyKeys(value, ["width", "height"], `Plugin window ${label}`);
   const width = Math.round(value.width as number);
   const height = Math.round(value.height as number);
   if (width < minimumWidth || width > 1_600 || height < minimumHeight || height > 1_100) {
@@ -2025,6 +2086,18 @@ function isStoredRecord(value: unknown): value is StoredPluginRecord {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function assertOnlyKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  const allowedKeys = new Set(allowed);
+  const unknown = Object.keys(value).find((key) => !allowedKeys.has(key));
+  if (unknown) throw new Error(`${label} contains an unknown field: ${unknown}.`);
+}
+
+function assertPlatformCompatible(manifest: PluginManifest): void {
+  if (manifest.platforms?.length && !manifest.platforms.includes(PLATFORM_ID)) {
+    throw new Error(`Plugin ${manifest.id} does not support the ${PLATFORM_ID} platform.`);
+  }
 }
 
 function isMissingFile(error: unknown): boolean {

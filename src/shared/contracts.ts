@@ -247,8 +247,8 @@ export interface PluginManifest {
   /** Platforms this plugin declares support for (e.g. `["canvastty"]`).
    *  Absent = compatible with every platform (legacy). */
   platforms?: string[];
-  /** Minimal host (CanvasTTY) version this plugin is written for, semver,
-   *  e.g. `"1.2.0"`. Absent = no host-version constraint (legacy). */
+  /** Minimal host (CanvasTTY) version this plugin is written for, semver.
+   *  Informational only; newer requirements are surfaced but do not block. */
   minHostVersion?: string;
   permissions: PluginPermission[];
   contributions: PluginContribution[];
