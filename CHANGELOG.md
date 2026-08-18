@@ -2,6 +2,12 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.3
+
+- Added a GitHub-backed plugin showcase with complete pagination, metadata-first manifests, platform and host-version hints, update discovery, and OAuth Device Flow sign-in.
+- Hardened plugin installation and updates with platform enforcement, atomic rollback, strict manifest validation, bounded metadata batches, trusted archive redirects, and protected OAuth persistence and IPC.
+- Added the permission-gated plugin `browser.open` SDK method for normalized HTTP(S) URLs, routed through one awaitable broker that creates or reuses a single embedded Browser card and persists it before reporting success.
+
 ## 1.2.2
 
 - Reworked canvas navigation: two-axis scrolling now pans the canvas by default, while pinch and `Cmd/Ctrl+scroll` perform focal-point zoom; the legacy scroll-to-zoom profile remains available in Settings, preserving its direction and sensitivity.
