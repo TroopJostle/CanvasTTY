@@ -2,6 +2,11 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.4
+
+- macOS bundles are now explicitly ad-hoc signed with hardened runtime and notarization disabled for the free distribution path; the release workflow runs strict `codesign` verification before uploading artifacts.
+- Updated installation guidance to explain that ad-hoc signing verifies bundle integrity but does not provide a Developer ID or notarization. macOS users should replace the pre-fix `1.2.2` and `1.2.3` artifacts with `1.2.4` or later.
+
 ## 1.2.3
 
 - Added a GitHub-backed plugin showcase with complete pagination, metadata-first manifests, platform and host-version hints, update discovery, and OAuth Device Flow sign-in.

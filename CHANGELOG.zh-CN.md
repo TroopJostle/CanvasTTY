@@ -2,6 +2,11 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.4
+
+- macOS bundle 现在会为免费分发路径显式进行 ad-hoc 签名，并关闭 hardened runtime 与 notarization；发布 workflow 会在上传产物前执行严格的 `codesign` 验证。
+- 安装说明现已明确：ad-hoc 签名只能验证 bundle 完整性，并不提供 Developer ID 或 notarization。macOS 用户应使用 `1.2.4` 或更高版本替换修复前的 `1.2.2` 和 `1.2.3` 产物。
+
 ## 1.2.3
 
 - 新增基于 GitHub 的插件展示页，支持完整分页、元数据优先 manifest、平台与主机版本提示、更新发现及 OAuth Device Flow 登录。
