@@ -262,6 +262,11 @@ async function handleRequest({
     await window.canvasTTY.plugins.openExternal(pluginId, stringParam(params.url, "url"));
     return null;
   }
+  if (method === "browser.open") {
+    requirePermission(plugin, "browser:open");
+    await window.canvasTTY.plugins.openBrowser(pluginId, stringParam(params.url, "url"));
+    return null;
+  }
   if (method === "media.pickLibrary") {
     requirePermission(plugin, "media:library");
     return window.canvasTTY.plugins.mediaPickLibrary(pluginId);
