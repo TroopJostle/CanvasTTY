@@ -369,10 +369,16 @@ export interface PluginPlaylistFile {
 
 export interface BrowserCanvasState extends SessionBounds {}
 
+export interface BrowserViewportClipBounds extends Size {
+  x: number;
+  y: number;
+}
+
 export interface BrowserViewportBounds extends Size {
   x: number;
   y: number;
   surface: BrowserViewportSurface;
+  clipBounds?: BrowserViewportClipBounds;
   canvasScale?: number;
   showAgentPresence?: boolean;
 }
