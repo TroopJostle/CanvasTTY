@@ -101,6 +101,13 @@ test("older settings files without the new keys inherit defaults", () => {
   assert.equal(normalized.hoverFocusSpeed, fallback.hoverFocusSpeed);
 });
 
+test("OpenCode and Hermes dangerous-profile acknowledgements survive normalization", () => {
+  const normalized = normalizeSettings({
+    acknowledgedDangerousProfiles: ["opencode", "hermes", "unknown", "codex"]
+  }, fallback);
+  assert.deepEqual(normalized.acknowledgedDangerousProfiles, ["opencode", "hermes", "codex"]);
+});
+
 test("a non-object candidate yields the fallback wholesale", () => {
   assert.equal(normalizeSettings(null, fallback), fallback);
   assert.equal(normalizeSettings("settings", fallback), fallback);

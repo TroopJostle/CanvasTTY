@@ -2,6 +2,11 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## Не выпущено
+
+- OpenCode добавлен как полноценный launcher в Linux, macOS и Windows: launch-only YOLO override, ограниченный доступ к встроенному браузеру через MCP, официальный provider mark, типы plugin SDK и provider smoke coverage. Строка лимитов OpenCode не добавлена до появления безопасного адаптера с реальным источником данных.
+- Hermes добавлен как отдельный полноценный launcher в Linux, macOS и Windows: штатный профиль `--yolo`, официальная иконка провайдера, типы plugin SDK, provider smoke coverage и ограниченный browser MCP-доступ через журналируемую восстанавливаемую запись `config.yaml`, которая не сохраняет capability-секреты литералами. Строка лимитов Hermes не добавлена до появления безопасного адаптера с реальным источником данных.
+
 ## 1.2.4
 
 - Бандлы macOS теперь явно подписываются ad-hoc с отключёнными hardened runtime и notarization для бесплатного способа распространения; перед загрузкой артефактов релизный workflow запускает строгую проверку `codesign`.

@@ -2,6 +2,11 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 未发布
+
+- OpenCode 现已成为 Linux、macOS 与 Windows 上的一等 launcher，包括仅本次启动有效的 YOLO 权限 override、受限的内置浏览器 MCP 访问、官方 provider mark、plugin SDK 类型与 provider smoke coverage。在具备安全且有真实数据源的适配器之前，不会添加 OpenCode 限额行。
+- Hermes 现已作为独立的一等 launcher 支持 Linux、macOS 与 Windows，包括原生 `--yolo` 配置、官方服务商图标、plugin SDK 类型、provider smoke coverage，以及通过带 journal、可恢复的 `config.yaml` 配置项提供的受限浏览器 MCP 访问；capability 机密绝不会以字面值写入。在具备安全且有真实数据源的适配器之前，不会添加 Hermes 限额行。
+
 ## 1.2.4
 
 - macOS bundle 现在会为免费分发路径显式进行 ad-hoc 签名，并关闭 hardened runtime 与 notarization；发布 workflow 会在上传产物前执行严格的 `codesign` 验证。

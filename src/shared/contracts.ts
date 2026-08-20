@@ -1,4 +1,4 @@
-export type ProviderId = "terminal" | "codex" | "claude" | "kimi";
+export type ProviderId = "terminal" | "codex" | "claude" | "kimi" | "opencode" | "hermes";
 export type AgentProviderId = Exclude<ProviderId, "terminal">;
 export type LaunchProfileId = "normal" | "yolo";
 export type SessionStatus = "idle" | "working" | "needs_approval" | "done" | "failed";
@@ -385,6 +385,8 @@ export const BROWSER_PROVIDER_COLORS: Record<BrowserAgentProvider, string> = {
   claude: "#D97757",
   codex: "#10A37F",
   kimi: "#7C5CFC",
+  opencode: "#5A5858",
+  hermes: "#D6A700",
   unknown: "#7A8291"
 };
 

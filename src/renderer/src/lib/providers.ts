@@ -11,7 +11,9 @@ export const PROVIDERS: Record<ProviderId, ProviderDefinition> = {
   terminal: { id: "terminal", label: "Terminal" },
   codex: { id: "codex", label: "Codex", dangerKey: "dangerCodex" },
   claude: { id: "claude", label: "Claude", dangerKey: "dangerClaude" },
-  kimi: { id: "kimi", label: "Kimi", dangerKey: "dangerKimi" }
+  kimi: { id: "kimi", label: "Kimi", dangerKey: "dangerKimi" },
+  opencode: { id: "opencode", label: "OpenCode", dangerKey: "dangerOpenCode" },
+  hermes: { id: "hermes", label: "Hermes", dangerKey: "dangerHermes" }
 };
 
-export const AGENT_PROVIDERS: AgentProviderId[] = ["codex", "claude", "kimi"];
+export const AGENT_PROVIDERS: AgentProviderId[] = ["codex", "claude", "kimi", "opencode", "hermes"];

@@ -36,6 +36,7 @@ Electron main process
 - `src/main/services/PluginSecretsService.ts` 串行化每个插件的机密写入，通过 Electron `safeStorage` 加密完整的有界 payload，拒绝 plaintext-only backend，并在卸载时删除加密文件。
 - `src/main/services/PluginMediaService.ts` 仅在原生目录选择后保存授权，隐藏绝对路径，跳过 symlink，并以 HTTP Range 提供音频。Playlist 读取限制在授权媒体库内；写入受大小限制，并且只能原子写入 `Playlists/`。
 - `src/main/services/BrowserService.ts` 管理内置浏览器的 `WebContentsView` tab。远程页面使用独立 persistent partition，禁用 Node，启用 context isolation/sandbox，并默认拒绝网站权限。这是 core service，不是 runtime 插件能力。
+- `TerminalManager` 注入 MCP helper 时不会留下永久的服务商配置变更。Claude Code 与 Codex 使用 CLI 参数；OpenCode 使用合并后的、仅本次启动有效的 `OPENCODE_CONFIG_CONTENT` 和一条 scoped browser-tool 权限；Kimi 使用 per-run MCP 配置，旧版本则使用带 compare-and-swap 与 recovery journal 的临时配置。Hermes 会在 `HERMES_HOME/config.yaml` 中获得临时 `mcp_servers.canvastty_browser` 配置项（POSIX 默认路径为 `~/.hermes/config.yaml`，Windows 默认路径为 `%LOCALAPPDATA%\hermes\config.yaml`），敏感 capability 值仍以子进程环境变量占位符保存。Kimi 与 Hermes 的临时配置会保留到最后一个所属 PTY 会话结束；若文件未被并发修改，则精确恢复原始字节。若 Hermes 启动意外中断，journal 会在 CanvasTTY 下次启动时修复配置，compare-and-swap 则保留用户的并发修改。其他 MCP 配置项、凭据和文件/shell 权限不会受影响。OpenCode YOLO 仅使用本次启动的 inline override，Hermes 则使用原生 `--yolo` 参数；两者都不修改持久权限设置。
 - `src/main/services/cliEnvironment.ts` 会在启动任何服务商进程前，用现有用户 CLI 目录补充图形会话的 `PATH`，且不会读取 shell startup script。
 
 主 `BrowserWindow` 在 settings、plugins、media 和 IPC 服务初始化之前创建并显示轻量本地启动页。初始化成功后替换为可信 renderer；bootstrap 失败后替换为可见错误页，并保留原生对话框 fallback。主进程持有 Electron single-instance lock；再次启动时恢复并聚焦已有窗口。

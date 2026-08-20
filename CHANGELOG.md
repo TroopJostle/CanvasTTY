@@ -2,6 +2,11 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- Added OpenCode as a first-class launcher on Linux, macOS, and Windows, including a launch-only YOLO permission override, scoped built-in browser MCP access, an official provider mark, plugin SDK types, and provider smoke coverage. OpenCode account limits remain absent until a safe source-backed adapter exists.
+- Added Hermes as a separate first-class launcher on Linux, macOS, and Windows, with its native `--yolo` profile, an official provider icon, plugin SDK types, provider smoke coverage, and scoped browser MCP access through a journaled, recoverable `config.yaml` entry that never stores capability secrets as literals. Hermes account limits remain absent until a safe source-backed adapter exists.
+
 ## 1.2.4
 
 - macOS bundles are now explicitly ad-hoc signed with hardened runtime and notarization disabled for the free distribution path; the release workflow runs strict `codesign` verification before uploading artifacts.

@@ -3,6 +3,8 @@ import terminalIcon from "../assets/icons/lucide/square-terminal.svg";
 import claudeIcon from "../assets/providers/claude.svg";
 import codexIcon from "../assets/providers/codex.png";
 import kimiIcon from "../assets/providers/kimi.ico";
+import openCodeIcon from "../assets/providers/opencode.svg";
+import hermesIcon from "../assets/providers/hermes.png";
 
 interface ProviderIconProps {
   provider: ProviderId;
@@ -12,7 +14,9 @@ interface ProviderIconProps {
 const PROVIDER_ASSETS = {
   codex: codexIcon,
   claude: claudeIcon,
-  kimi: kimiIcon
+  kimi: kimiIcon,
+  opencode: openCodeIcon,
+  hermes: hermesIcon
 } as const;
 
 export function ProviderIcon({ provider, size = "medium" }: ProviderIconProps): React.JSX.Element {
