@@ -21,7 +21,7 @@
 
 | 桌面端 | 界面 | 终端 | 服务商 |
 |:--|:--|:--|:--|
-| **Electron**<br>electron-vite | **React**<br>TypeScript | **xterm.js**<br>node-pty | **Codex**<br>Claude · Kimi · OpenCode · Hermes |
+| **Electron**<br>electron-vite | **React**<br>TypeScript | **xterm.js**<br>node-pty | **Codex**<br>Claude · Kimi · OpenCode · Hermes · Grok Build |
 
 应用界面目前支持英语和俄语；本文档另提供简体中文版本。
 
@@ -31,7 +31,7 @@
 
 ## Windows 终端与服务商 CLI
 
-在 Windows 上，Terminal 启动器会以干净的 `-NoLogo -NoProfile` 会话打开系统自带的 Windows PowerShell；如果不可用，则回退到 `pwsh` 或 `cmd.exe`。在交给 `node-pty`/ConPTY 之前，CanvasTTY 会先从用户 `PATH`、再从标准的用户级 CLI 目录中，为 Codex、Claude、Kimi、OpenCode 与 Hermes 解析出具体的 `.exe`、`.com`、`.cmd` 或 `.bat` 启动文件。
+在 Windows 上，Terminal 启动器会以干净的 `-NoLogo -NoProfile` 会话打开系统自带的 Windows PowerShell；如果不可用，则回退到 `pwsh` 或 `cmd.exe`。在交给 `node-pty`/ConPTY 之前，CanvasTTY 会先从用户 `PATH`、再从标准的用户级 CLI 目录中，为 Codex、Claude、Kimi、OpenCode、Hermes 与 Grok Build 解析出具体的 `.exe`、`.com`、`.cmd` 或 `.bat` 启动文件。
 
 CanvasTTY 不会安装服务商 CLI。若某个 CLI 缺失，启动对话框会明确说明未找到的服务商以及已检查的目录。安装所需 CLI 后，请重启 CanvasTTY，让桌面进程读取更新后的环境。
 

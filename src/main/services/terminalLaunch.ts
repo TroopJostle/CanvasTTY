@@ -72,6 +72,7 @@ export function resolveTerminalLaunch(
 function dangerousArguments(provider: Exclude<ProviderId, "terminal" | "opencode">): string[] {
   if (provider === "codex") return ["--dangerously-bypass-approvals-and-sandbox"];
   if (provider === "claude") return ["--dangerously-skip-permissions"];
+  if (provider === "grok") return ["--always-approve"];
   return ["--yolo"];
 }
 
@@ -139,6 +140,7 @@ function knownProviderDirectories(
     directories.push(win32.join(localAppData, "Programs", "OpenAI", "Codex", "bin"));
   }
   if (provider === "kimi") directories.push(win32.join(homeDirectory, ".kimi-code", "bin"));
+  if (provider === "grok") directories.push(win32.join(homeDirectory, ".grok", "bin"));
   directories.push(win32.join(homeDirectory, ".local", "bin"));
   const roamingAppData = environment.APPDATA ?? win32.join(homeDirectory, "AppData", "Roaming");
   directories.push(win32.join(roamingAppData, "npm"));

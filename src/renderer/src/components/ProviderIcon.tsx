@@ -5,6 +5,7 @@ import codexIcon from "../assets/providers/codex.png";
 import kimiIcon from "../assets/providers/kimi.ico";
 import openCodeIcon from "../assets/providers/opencode.svg";
 import hermesIcon from "../assets/providers/hermes.png";
+import grokIcon from "../assets/providers/grok.png";
 
 interface ProviderIconProps {
   provider: ProviderId;
@@ -16,7 +17,8 @@ const PROVIDER_ASSETS = {
   claude: claudeIcon,
   kimi: kimiIcon,
   opencode: openCodeIcon,
-  hermes: hermesIcon
+  hermes: hermesIcon,
+  grok: grokIcon
 } as const;
 
 export function ProviderIcon({ provider, size = "medium" }: ProviderIconProps): React.JSX.Element {

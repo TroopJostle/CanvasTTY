@@ -113,6 +113,17 @@ test("Hermes uses its native interactive CLI and scopes YOLO to the launch", () 
   );
 });
 
+test("Grok Build uses its native TUI and scopes automatic approval to YOLO", () => {
+  assert.deepEqual(
+    resolveTerminalLaunch("grok", "normal", [], { platform: "linux", environment: {} }),
+    { command: "grok", args: [] }
+  );
+  assert.deepEqual(
+    resolveTerminalLaunch("grok", "yolo", [], { platform: "linux", environment: {} }),
+    { command: "grok", args: ["--always-approve"] }
+  );
+});
+
 test("Windows Codex resolves an absolute native executable and preserves bridge arguments", () => {
   const codex = "C:\\Users\\dev\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe";
   const launch = resolveTerminalLaunch("codex", "yolo", ["--bridge", "C:\\runtime path\\helper"], {

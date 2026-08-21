@@ -206,7 +206,7 @@ export class TerminalManager {
     profile: CreateSessionRequest["profile"],
     cwd: string
   ): { process: IPty; agentBrowser: PreparedAgentBrowserPtyLaunch | null } {
-    const agentBrowser = provider === "terminal"
+    const agentBrowser = provider === "terminal" || provider === "grok"
       ? null
       : this.agentBrowser?.prepareLaunch({ terminalSessionId: id, provider, cwd }) ?? null;
     try {
@@ -302,7 +302,7 @@ function assertDirectory(cwd: string): void {
 }
 
 function assertCreateRequest(request: CreateSessionRequest): void {
-  const providers = new Set<ProviderId>(["terminal", "codex", "claude", "kimi", "opencode", "hermes"]);
+  const providers = new Set<ProviderId>(["terminal", "codex", "claude", "kimi", "opencode", "hermes", "grok"]);
   if (!request || !providers.has(request.provider)) throw new Error("Unknown terminal provider.");
   if (request.profile !== "normal" && request.profile !== "yolo") throw new Error("Unknown launch profile.");
   if (typeof request.cwd !== "string" || request.cwd.length === 0) throw new Error("Project folder is required.");

@@ -23,13 +23,13 @@ npm run dev
 ## First session
 
 1. Open **Terminal** on Home to start a shell immediately in the last project directory.
-2. Open **Codex**, **Claude**, **Kimi**, **OpenCode**, or **Hermes** to choose a project folder and launch profile for that fixed provider.
+2. Open **Codex**, **Claude**, **Kimi**, **OpenCode**, **Hermes**, or **Grok Build** to choose a project folder and launch profile for that fixed provider.
 3. Open **Browser** on Home to create or restore the built-in browser card. Agent sessions launched by CanvasTTY can use its open tabs while **Settings → Browser → Agent access** is enabled.
 4. Move or resize the live terminal and browser on the same canvas.
 5. Zoom out to use semantic summaries as navigation targets; zoom back in to interact with xterm or the native browser page.
 6. Return to Home to inspect real sessions, connected browser agents, and any provider quota windows that their adapters expose.
 
-The **YOLO** profile disables provider safety prompts where the provider supports such a mode. For OpenCode, CanvasTTY applies a launch-only inline `permission: "allow"` override while preserving the rest of the merged OpenCode configuration. Hermes receives its native `--yolo` flag for that launch. CanvasTTY presents an explicit danger confirmation; use it only in a directory you are willing to let the agent modify.
+The **YOLO** profile disables provider safety prompts where the provider supports such a mode. For OpenCode, CanvasTTY applies a launch-only inline `permission: "allow"` override while preserving the rest of the merged OpenCode configuration. Hermes receives its native `--yolo` flag, while Grok Build receives its native `--always-approve` flag for that launch. CanvasTTY presents an explicit danger confirmation; use it only in a directory you are willing to let the agent modify.
 
 ## Terminal input and controls
 

@@ -30,7 +30,7 @@ Electron main process
 - `src/preload/index.ts` 只暴露 renderer 需要的类型化能力。Node integration 保持关闭，context isolation 与 sandbox 保持开启。
 - `src/main/ipc/registerIpc.ts` 负责原生 side effect，并校验对持久化媒体的访问。
 - `src/main/services/TerminalManager.ts` 是实时会话状态与 PTY buffer 的事实来源。它用有界分块缓冲区保存 scrollback，并将 PTY data 合并为 16ms IPC batch，使 clear/redraw sequence 尽量一起到达 xterm。新 PTY 状态为 `idle`；进程退出只产生 `done` 或 `failed`。`working` 和 `needs_approval` 只接受类型化的服务商 lifecycle signal，绝不根据 PTY 是否存在或终端文字推断。
-- `src/main/services/LimitsService.ts` 通过已安装 CLI 的 app-server protocol 读取 Codex，通过服务商 usage endpoint 读取 Claude/Kimi。凭据只在可信主进程读取，只通过 HTTPS 发往匹配的服务商，不记录也不通过 IPC 暴露。该服务负责 timeout、structural normalization、cache、stale fallback 与子进程 cleanup；原始服务商响应不会跨越 IPC。
+- `src/main/services/LimitsService.ts` 通过已安装 CLI 的 app-server protocol 读取 Codex，并通过服务商 usage/billing endpoint 读取 Claude、Kimi、OpenCode Go 与 Grok Build。凭据只在可信主进程读取，只通过 HTTPS 发往匹配的服务商，不记录也不通过 IPC 暴露。该服务负责 timeout、structural normalization、cache、stale fallback 与子进程 cleanup；原始服务商响应不会跨越 IPC。
 - `src/main/services/SettingsStore.ts` 会规范化每次更新，并通过串行原子写入持久化。
 - `src/main/services/PluginManager.ts` 安装已构建的静态仓库，不执行 package script；拒绝 symlink 与超大包；持久化启用 registry；只提供包内文件，并执行每插件 permissions/storage quota。
 - `src/main/services/PluginSecretsService.ts` 串行化每个插件的机密写入，通过 Electron `safeStorage` 加密完整的有界 payload，拒绝 plaintext-only backend，并在卸载时删除加密文件。
@@ -91,7 +91,7 @@ Session counter、progress bar 与 status 必须来自真实 `SessionSnapshot`�
 
 1. `App` 在 bootstrap 时以及每 60 秒请求脱敏后的 `LimitsSnapshot`。
 2. `LimitsService` 对 refresh 去重，并维护 60 秒 cache。
-3. Codex 通过 `codex app-server` 的 `account/rateLimits/read` 查询；Claude/Kimi 使用只读 usage endpoint 和对应 CLI 已有凭据。响应经过结构校验，只保留 percentage、window 与 reset time。
+3. Codex 通过 `codex app-server` 的 `account/rateLimits/read` 查询；Claude、Kimi、OpenCode Go 与 Grok Build 使用只读 usage/billing endpoint 和对应 CLI 已有凭据。OpenCode Go 提供真实 rolling、weekly、monthly window；Grok Build 提供真实共享 billing period。响应经过结构校验，只保留 percentage、window 与 reset time。
 4. 一次成功后刷新失败时，最后的有效 snapshot 以 stale 返回。缺失或不支持的 adapter 返回明确 unavailable reason，而不是 `0%`。
 5. Claude weekly window 只适用于 Claude.ai subscription session。API Usage Billing 返回 `subscription-required`，而不是虚假 quota。CanvasTTY 不解析服务商 TUI screen。
 
