@@ -114,9 +114,17 @@ test("an exited PTY can restart in place without recreating its xterm card", asy
   assert.match(manager, /restart\(id: string\): SessionSnapshot/);
   assert.match(manager, /session\.metadata\.exitCode === null/);
   assert.match(manager, /session\.metadata\.status = "idle"/);
+  assert.match(manager, /session\.metadata\.failureDetails = null/);
   assert.match(manager, /this\.bindProcess\(id, session, launched\.process\)/);
   assert.match(card, /shouldRestartExitedTerminal\(event, sessionExited\.current\)/);
   assert.match(card, /onRestart\(session\.id\)/);
+});
+
+test("failed PTYs preserve their final sanitized output as failure details", async () => {
+  const source = await readFile(terminalManagerPath, "utf8");
+
+  assert.match(source, /terminalFailureDetails\(current\.bufferChunks\.slice\(current\.bufferStart\)\.join\(""\)\)/);
+  assert.match(source, /current\.metadata\.failureDetails = exitCode === 0/);
 });
 
 function effectDependenciesContaining(source, marker) {

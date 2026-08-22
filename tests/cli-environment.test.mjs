@@ -34,3 +34,12 @@ test("does not duplicate CLI directories already present in PATH", () => {
 
   assert.equal(environment.PATH.split(":").filter((entry) => entry === kimiBin).length, 1);
 });
+
+test("adds Homebrew directories for macOS apps launched outside an interactive shell", () => {
+  const environment = { PATH: "/usr/bin:/bin" };
+  const homebrewBin = "/opt/homebrew/bin";
+
+  augmentCliPath(environment, "/Users/Kisa", "darwin", (directory) => directory === homebrewBin);
+
+  assert.equal(environment.PATH, `/usr/bin:/bin:${homebrewBin}`);
+});

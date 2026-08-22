@@ -18,6 +18,7 @@ export function augmentCliPath(
     path.join(homeDirectory, ".npm-global", "bin"),
     path.join(homeDirectory, ".bun", "bin"),
     path.join(homeDirectory, ".cargo", "bin"),
+    ...(platform === "darwin" ? ["/opt/homebrew/bin", "/usr/local/bin"] : []),
     ...(platform === "win32" ? [path.join(homeDirectory, "AppData", "Roaming", "npm")] : [])
   ].filter(directoryExists);
 

@@ -21,6 +21,7 @@ import type {
 } from "./agent-browser/AgentBrowserBridge.ts";
 import { AGENT_BROWSER_ENV } from "./agent-browser/AgentBrowserBridge.ts";
 import { tryPtyOperation } from "./ptySafety.ts";
+import { terminalFailureDetails } from "./terminalFailureDetails.ts";
 import { resolveTerminalLaunch } from "./terminalLaunch.ts";
 
 const MAX_SCROLLBACK_CHARS = 240_000;
@@ -82,7 +83,8 @@ export class TerminalManager {
       size: DEFAULT_TERMINAL_SIZE,
       status: "idle",
       startedAt: Date.now(),
-      exitCode: null
+      exitCode: null,
+      failureDetails: null
     };
 
     const session: ManagedSession = {
@@ -118,6 +120,7 @@ export class TerminalManager {
     session.metadata.status = "idle";
     session.metadata.startedAt = Date.now();
     session.metadata.exitCode = null;
+    session.metadata.failureDetails = null;
     this.bindProcess(id, session, launched.process);
     this.emitSession(session.metadata);
     return snapshot(session);
@@ -247,6 +250,9 @@ export class TerminalManager {
       this.flushOutput(id, current);
       current.metadata.exitCode = exitCode;
       current.metadata.status = exitCode === 0 ? "done" : "failed";
+      current.metadata.failureDetails = exitCode === 0
+        ? null
+        : terminalFailureDetails(current.bufferChunks.slice(current.bufferStart).join(""));
       current.agentBrowser?.cleanup();
       current.agentBrowser = null;
       this.emitSession(current.metadata);
