@@ -2,6 +2,13 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.6
+
+- Provider CLI executables are now resolved once at startup and reused by terminals, usage limits, and agent-browser flows through the same absolute launcher, with structured diagnostics for missing and non-executable commands.
+- Failed HOME sessions now expose complete sanitized diagnostics on hover or keyboard focus, offer a Copy action, and explain silent exits with their exit code. The top-layer details popover preserves the three-row scroll viewport and the failed-session danger rail.
+- Packaged macOS apps now discover Homebrew CLIs and the official per-user OpenCode install under `~/.opencode/bin` even when launched with Finder's minimal `PATH`.
+- CI now packages the macOS app and exercises real minimal-`PATH` CLI resolution on every pull request and `main` update, in addition to the release-time smoke.
+
 ## 1.2.5
 
 - Added OpenCode, Hermes, and Grok Build as first-class launchers on Linux, macOS, and Windows, with official provider marks, native per-launch YOLO behavior, Windows discovery, plugin SDK coverage, and scoped built-in browser MCP integration where supported.

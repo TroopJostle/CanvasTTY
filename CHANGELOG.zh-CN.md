@@ -2,6 +2,13 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.6
+
+- Provider CLI 可执行文件现在会在启动时统一解析一次，随后由终端、用量限额和 agent-browser 流程复用同一个绝对路径 launcher；缺失或不可执行的命令会返回结构化诊断。
+- 失败的 HOME 会话现在可在鼠标悬停或键盘聚焦时显示完整且已清理的诊断信息，支持一键复制，并用退出代码说明无输出的异常结束。顶层详情浮层不会破坏三行滚动视口，同时保留失败会话的红色 danger rail。
+- 打包后的 macOS 应用现在即使从 Finder 启动且仅有最小 `PATH`，也能发现 Homebrew CLI 和位于 `~/.opencode/bin` 的官方用户级 OpenCode 安装。
+- CI 现在会在每个 pull request 和 `main` 更新中打包 macOS 应用并执行真实的最小 `PATH` CLI 解析测试，而不再只在发布阶段运行该 smoke。
+
 ## 1.2.5
 
 - OpenCode、Hermes 与 Grok Build 现已成为 Linux、macOS 和 Windows 上的一等 launcher：包含官方 provider mark、仅作用于本次启动的原生 YOLO 行为、Windows CLI 发现、plugin SDK 覆盖，以及在服务商支持时提供的受限内置浏览器 MCP 集成。
