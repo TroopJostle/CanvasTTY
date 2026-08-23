@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="docs/assets/canvastty-cover.png" alt="CanvasTTY — 面向本地终端与 AI 智能体的空间桌面" width="100%">
-</p>
+https://github.com/user-attachments/assets/444612f7-cda1-4fd6-8514-2f4fac9cc520
 
 <p align="center">
   <a href="README.md">English</a> ·
