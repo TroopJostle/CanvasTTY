@@ -26,6 +26,22 @@ test("Finder-like macOS PATH resolves Codex from the Homebrew platform default",
   assert.equal(resolution.environment.PATH, "/usr/bin:/bin:/opt/homebrew/bin");
 });
 
+test("Finder-like macOS PATH resolves OpenCode from its official per-user directory", () => {
+  const opencode = "/test-home/.opencode/bin/opencode";
+  const registry = createProviderCliRegistry({
+    platform: "darwin",
+    environment: { PATH: "/usr/bin:/bin" },
+    homeDirectory: "/test-home",
+    inspectCandidate: inspection(new Map([[opencode, null]])),
+    directoryExists: (path) => ["/usr/bin", "/bin", "/test-home/.opencode/bin"].includes(path)
+  });
+
+  const resolution = registry.get("opencode");
+  assert.equal(resolution.state, "available");
+  assert.equal(resolution.executable, opencode);
+  assert.equal(resolution.environment.PATH, "/usr/bin:/bin:/test-home/.opencode/bin");
+});
+
 test("override wins over PATH and fallback candidates", () => {
   const override = "/fixtures/codex";
   const fromPath = "/tools/codex";

@@ -18,12 +18,14 @@ try {
   const platformRoot = join(root, "platform-root");
   const home = join(root, "home");
   const homebrewBin = join(platformRoot, "opt", "homebrew", "bin");
+  const opencodeBin = join(home, ".opencode", "bin");
   await Promise.all([
     mkdir(homebrewBin, { recursive: true, mode: 0o700 }),
+    mkdir(opencodeBin, { recursive: true, mode: 0o700 }),
     mkdir(home, { recursive: true, mode: 0o700 })
   ]);
   for (const provider of PROVIDERS) {
-    const path = join(homebrewBin, provider);
+    const path = join(provider === "opencode" ? opencodeBin : homebrewBin, provider);
     await writeFile(path, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   }
 
@@ -33,7 +35,8 @@ try {
     if (resolution?.state !== "available") {
       throw new Error(`${provider} was not available in the packaged startup snapshot.`);
     }
-    if (resolution.executable !== join(homebrewBin, provider)) {
+    const expectedExecutable = join(provider === "opencode" ? opencodeBin : homebrewBin, provider);
+    if (resolution.executable !== expectedExecutable) {
       throw new Error(`${provider} resolved an unexpected executable: ${resolution.executable}`);
     }
   }

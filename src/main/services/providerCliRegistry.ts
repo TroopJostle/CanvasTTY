@@ -275,6 +275,7 @@ function knownProviderDirectories(
     const localAppData = environment.LOCALAPPDATA ?? path.join(homeDirectory, "AppData", "Local");
     directories.push(path.join(localAppData, "Programs", "OpenAI", "Codex", "bin"));
   }
+  if (provider === "opencode") directories.push(path.join(homeDirectory, ".opencode", "bin"));
   if (provider === "kimi") directories.push(path.join(homeDirectory, ".kimi-code", "bin"));
   if (provider === "grok") directories.push(path.join(homeDirectory, ".grok", "bin"));
   return directories;

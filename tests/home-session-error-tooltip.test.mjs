@@ -12,14 +12,26 @@ test("Home exposes failed session details from the error mark with a Copy action
   assert.match(source, /className="usage-row__failure-tooltip"/);
   assert.match(source, /className="usage-row__failure-trigger"/);
   assert.match(source, /<UiIcon name="error" size=\{24\} \/>/);
-  assert.match(source, /window\.canvasTTY\.clipboard\.writeText\(failureDetails\)/);
+  assert.match(source, /window\.canvasTTY\.clipboard\.writeText\(details\)/);
   assert.match(source, /<UiIcon name="copy" size=\{16\} \/>/);
 });
 
-test("Home keeps error details visible while the trigger is hovered or keyboard-focused", async () => {
+test("Home opens failure details from hover or keyboard focus in a top-layer popover", async () => {
+  const source = await readFile(homeZonePath, "utf8");
   const styles = await readFile(appStylesPath, "utf8");
 
-  assert.match(styles, /\.usage-row__failure-trigger:hover \+ \.usage-row__failure-tooltip/);
-  assert.match(styles, /\.usage-row__failure-trigger:focus-visible \+ \.usage-row__failure-tooltip/);
-  assert.match(styles, /\.usage-row__failure-tooltip:hover/);
+  assert.match(source, /popover="manual"/);
+  assert.match(source, /onMouseEnter=\{openTooltip\}/);
+  assert.match(source, /onFocus=\{openTooltip\}/);
+  assert.match(source, /tooltip\.showPopover\(\)/);
+  assert.match(styles, /\.usage-row__failure-tooltip \{ position: fixed;/);
+  assert.match(styles, /\.usage-row__failure-tooltip:popover-open \{ display: grid; \}/);
+});
+
+test("failure popover preserves the three-row scroll viewport and danger rail", async () => {
+  const styles = await readFile(appStylesPath, "utf8");
+
+  assert.match(styles, /\.usage-list \{[^}]*overflow-y: auto;/);
+  assert.doesNotMatch(styles, /\.usage-list:has\([^}]+overflow: visible;/);
+  assert.match(styles, /\.usage-row-wrap:has\(\.ui-icon--error\) \.usage-row::before \{ background: var\(--danger\); \}/);
 });
