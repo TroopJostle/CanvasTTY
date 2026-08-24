@@ -2,6 +2,10 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.7
+
+- 新增受权限控制的 Hermes Desktop HUD 插件桥接。主机仅通过 `hermes:hud` 提供状态查询、HUD 模式启动和关闭操作；插件无法选择可执行文件、参数或 PID。
+
 ## 1.2.6
 
 - Provider CLI 可执行文件现在会在启动时统一解析一次，随后由终端、用量限额和 agent-browser 流程复用同一个绝对路径 launcher；缺失或不可执行的命令会返回结构化诊断。

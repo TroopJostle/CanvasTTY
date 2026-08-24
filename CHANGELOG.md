@@ -2,6 +2,10 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.7
+
+- Added a permission-gated Hermes Desktop HUD bridge for plugins. The host exposes only status, open-in-HUD, and close operations through `hermes:hud`; plugins cannot choose an executable, arguments, or PID.
+
 ## 1.2.6
 
 - Provider CLI executables are now resolved once at startup and reused by terminals, usage limits, and agent-browser flows through the same absolute launcher, with structured diagnostics for missing and non-executable commands.
