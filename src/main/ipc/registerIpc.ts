@@ -23,6 +23,7 @@ import type { BrowserService } from "../services/BrowserService";
 import { normalizePluginBrowserUrl } from "../services/browser/PluginBrowserOpenPolicy";
 import { PluginBrowserOpenBroker } from "./PluginBrowserOpenBroker";
 import type { GithubAuthService } from "../services/GithubAuthService";
+import type { HermesHudService } from "../services/HermesHudService";
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const MEDIA_MIME: Record<string, string> = {
@@ -42,6 +43,7 @@ interface Dependencies {
   pluginSecrets: PluginSecretsService;
   browser: BrowserService;
   githubAuth: GithubAuthService;
+  hermesHud: HermesHudService;
   getMainWindow(): BrowserWindow | null;
   applyBrowserSettings(settings: AppSettings): void;
   setCanvasNavigationShortcutCapture(active: boolean): void;
@@ -61,6 +63,7 @@ export function registerIpc({
   pluginSecrets,
   browser,
   githubAuth,
+  hermesHud,
   getMainWindow,
   applyBrowserSettings,
   setCanvasNavigationShortcutCapture,
@@ -290,6 +293,18 @@ export function registerIpc({
     stringValue(name, "name"),
     playlistContent(content)
   ));
+  ipcMain.handle(IPC.pluginsHermesHudStatus, (_event, pluginId: string) => {
+    plugins.assertPermission(pluginId, "hermes:hud");
+    return hermesHud.status();
+  });
+  ipcMain.handle(IPC.pluginsHermesHudOpen, (_event, pluginId: string) => {
+    plugins.assertPermission(pluginId, "hermes:hud");
+    return hermesHud.open();
+  });
+  ipcMain.handle(IPC.pluginsHermesHudClose, (_event, pluginId: string) => {
+    plugins.assertPermission(pluginId, "hermes:hud");
+    return hermesHud.close();
+  });
   ipcMain.handle(IPC.pluginsHostInvoke, async (
     event,
     pluginId: string,
@@ -352,6 +367,18 @@ export function registerIpc({
     if (method === "limits.get") {
       plugins.assertPermission(pluginId, "limits:read");
       return { state: "ready", snapshot: await limits.get() };
+    }
+    if (method === "hermesHud.getState") {
+      plugins.assertPermission(pluginId, "hermes:hud");
+      return hermesHud.status();
+    }
+    if (method === "hermesHud.open") {
+      plugins.assertPermission(pluginId, "hermes:hud");
+      return hermesHud.open();
+    }
+    if (method === "hermesHud.close") {
+      plugins.assertPermission(pluginId, "hermes:hud");
+      return hermesHud.close();
     }
     if (method === "launcher.open") {
       plugins.assertPermission(pluginId, "launcher:open");

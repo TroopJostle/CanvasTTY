@@ -23,6 +23,9 @@ export interface CanvasTTYPluginHost {
   request(method: "playlists.list", params: { libraryId: string }): Promise<CanvasTTYPluginPlaylistFile[]>;
   request(method: "playlists.read", params: { libraryId: string; playlistId: string }): Promise<string>;
   request(method: "playlists.write", params: { libraryId: string; name: string; content: string }): Promise<CanvasTTYPluginPlaylistFile>;
+  request(method: "hermesHud.getState"): Promise<CanvasTTYPluginHermesHudSnapshot>;
+  request(method: "hermesHud.open"): Promise<CanvasTTYPluginHermesHudSnapshot>;
+  request(method: "hermesHud.close"): Promise<CanvasTTYPluginHermesHudSnapshot>;
   request(method: "secrets.get", params: { key: string }): Promise<string | null>;
   request(method: "secrets.set", params: { key: string; value: string }): Promise<null>;
   request(method: "secrets.delete", params: { key: string }): Promise<null>;
@@ -50,6 +53,11 @@ export interface CanvasTTYPluginHost {
     read(libraryId: string, playlistId: string): Promise<string>;
     write(libraryId: string, name: string, content: string): Promise<CanvasTTYPluginPlaylistFile>;
   };
+  hermesHud: {
+    getState(): Promise<CanvasTTYPluginHermesHudSnapshot>;
+    open(): Promise<CanvasTTYPluginHermesHudSnapshot>;
+    close(): Promise<CanvasTTYPluginHermesHudSnapshot>;
+  };
   onContext(listener: (context: CanvasTTYPluginContext) => void): () => void;
   onStorageChange(listener: (key: string, value: unknown) => void): () => void;
 }
@@ -60,7 +68,7 @@ export interface CanvasTTYPluginContext {
     id: string;
     name: string;
     version: string;
-    permissions: Array<"storage" | "secrets" | "sessions:read" | "limits:read" | "launcher:open" | "external:open" | "browser:open" | "media:library" | "playlists:read" | "playlists:write" | "network">;
+    permissions: Array<"storage" | "secrets" | "sessions:read" | "limits:read" | "launcher:open" | "external:open" | "browser:open" | "media:library" | "playlists:read" | "playlists:write" | "hermes:hud" | "network">;
     modules: string[];
   };
   contribution: {
@@ -103,6 +111,14 @@ export interface CanvasTTYPluginPlaylistFile {
   relativePath: string;
   size: number;
 }
+
+export type CanvasTTYPluginHermesHudSnapshot =
+  | { state: "unavailable"; reason: "cli-not-found"; message: string }
+  | { state: "stopped" }
+  | { state: "starting" }
+  | { state: "stopping" }
+  | { state: "running"; hudOpen: boolean }
+  | { state: "error"; message: string };
 
 export type CanvasTTYPluginLimitsResult =
   | { state: "loading"; snapshot: null }

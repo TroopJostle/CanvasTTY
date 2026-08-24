@@ -205,7 +205,16 @@ export type PluginPermission =
   | "media:library"
   | "playlists:read"
   | "playlists:write"
+  | "hermes:hud"
   | "network";
+
+export type HermesHudSnapshot =
+  | { state: "unavailable"; reason: "cli-not-found"; message: string }
+  | { state: "stopped" }
+  | { state: "starting" }
+  | { state: "stopping" }
+  | { state: "running"; hudOpen: boolean }
+  | { state: "error"; message: string };
 
 export interface PluginGridSize extends HomeGridSize {}
 
@@ -794,6 +803,9 @@ export interface CanvasTTYApi {
     playlistsList(pluginId: string, libraryId: string): Promise<PluginPlaylistFile[]>;
     playlistsRead(pluginId: string, libraryId: string, playlistId: string): Promise<string>;
     playlistsWrite(pluginId: string, libraryId: string, name: string, content: string): Promise<PluginPlaylistFile>;
+    hermesHudStatus(pluginId: string): Promise<HermesHudSnapshot>;
+    hermesHudOpen(pluginId: string): Promise<HermesHudSnapshot>;
+    hermesHudClose(pluginId: string): Promise<HermesHudSnapshot>;
     onOpenLauncher(listener: (event: PluginLauncherRequest) => void): () => void;
     onOpenCanvas(listener: (event: PluginCanvasRequest) => void): () => void;
     onBrowserOpenRequested(listener: (event: PluginBrowserOpenRequest) => void): () => void;
@@ -898,6 +910,9 @@ export const IPC = {
   pluginsPlaylistsList: "plugins:playlists-list",
   pluginsPlaylistsRead: "plugins:playlists-read",
   pluginsPlaylistsWrite: "plugins:playlists-write",
+  pluginsHermesHudStatus: "plugins:hermes-hud-status",
+  pluginsHermesHudOpen: "plugins:hermes-hud-open",
+  pluginsHermesHudClose: "plugins:hermes-hud-close",
   pluginsHostInvoke: "plugins:host-invoke",
   pluginsLauncherRequested: "plugins:launcher-requested",
   pluginsCanvasRequested: "plugins:canvas-requested",

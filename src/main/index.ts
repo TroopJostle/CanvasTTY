@@ -13,6 +13,7 @@ import { PluginManager } from "./services/PluginManager";
 import { GithubAuthService } from "./services/GithubAuthService";
 import { PluginMediaService } from "./services/PluginMediaService";
 import { PluginSecretsService } from "./services/PluginSecretsService";
+import { HermesHudService } from "./services/HermesHudService";
 import { BrowserService } from "./services/BrowserService";
 import { CanvasNavigationInputController } from "./services/CanvasNavigationOverride";
 import { activeCanvasWheelBinding } from "../shared/canvasNavigation";
@@ -70,6 +71,7 @@ let pluginManager: PluginManager | null = null;
 let githubAuth: GithubAuthService | null = null;
 let pluginMediaService: PluginMediaService | null = null;
 let pluginSecretsService: PluginSecretsService | null = null;
+let hermesHudService: HermesHudService | null = null;
 let browserService: BrowserService | null = null;
 let canvasNavigationInput: CanvasNavigationInputController | null = null;
 let agentGateway: AgentGateway | null = null;
@@ -127,6 +129,7 @@ async function initializeServices(): Promise<void> {
   // Recovery is independent of gateway availability: interrupted provider config
   // overlays must be restored before any new terminal can launch, including on Windows.
   const hermesHomeDirectory = resolveHermesHomeDirectory();
+  hermesHudService = new HermesHudService(providerClis, hermesHomeDirectory);
   recoverHermesConfigurationOnStartup(hermesHomeDirectory);
   const kimiHomeDirectory = resolveKimiHomeDirectory();
   recoverKimiConfigurationOnStartup(kimiHomeDirectory);
@@ -229,6 +232,7 @@ async function initializeServices(): Promise<void> {
     pluginSecrets: pluginSecretsService,
     browser: browserService,
     githubAuth: githubAuth!,
+    hermesHud: hermesHudService,
     getMainWindow: () => mainWindow,
     applyBrowserSettings: (next) => {
       agentBrowserBridge?.setEnabled(next.browserAgentAccess);

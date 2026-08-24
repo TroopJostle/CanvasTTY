@@ -250,6 +250,18 @@ async function handleRequest({
     requirePermission(plugin, "limits:read");
     return limits ? { state: "ready", snapshot: limits } : { state: "loading", snapshot: null };
   }
+  if (method === "hermesHud.getState") {
+    requirePermission(plugin, "hermes:hud");
+    return window.canvasTTY.plugins.hermesHudStatus(pluginId);
+  }
+  if (method === "hermesHud.open") {
+    requirePermission(plugin, "hermes:hud");
+    return window.canvasTTY.plugins.hermesHudOpen(pluginId);
+  }
+  if (method === "hermesHud.close") {
+    requirePermission(plugin, "hermes:hud");
+    return window.canvasTTY.plugins.hermesHudClose(pluginId);
+  }
   if (method === "launcher.open") {
     requirePermission(plugin, "launcher:open");
     const provider = stringParam(params.provider, "provider");

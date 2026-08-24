@@ -41,6 +41,7 @@ const manifest = {
     "media:library",
     "playlists:read",
     "playlists:write",
+    "hermes:hud",
     "network"
   ],
   contributions: [
@@ -117,6 +118,11 @@ test("recognizes browser:open as a distinct plugin permission", () => {
   const browserManifest = { ...manifest, permissions: ["browser:open"] };
   assert.deepEqual(validatePluginManifest(browserManifest), browserManifest);
   assert.deepEqual(validatePluginManifest({ ...manifest, permissions: ["external:open"] }).permissions, ["external:open"]);
+});
+
+test("recognizes the narrow Hermes HUD control permission", () => {
+  const hudManifest = { ...manifest, permissions: ["hermes:hud"] };
+  assert.deepEqual(validatePluginManifest(hudManifest), hudManifest);
 });
 
 test("rejects executable escapes, unknown permissions, and unsupported API versions", () => {
@@ -199,6 +205,7 @@ test("previews, installs, serves, stores, disables, and uninstalls a static pack
     const sdkSource = await sdk.text();
     assert.match(sdkSource, /secrets: Object\.freeze/);
     assert.match(sdkSource, /canvas: Object\.freeze/);
+    assert.match(sdkSource, /hermesHud: Object\.freeze/);
     assert.match(sdkSource, /onStorageChange/);
 
     await manager.setEnabled(installed.manifest.id, false);

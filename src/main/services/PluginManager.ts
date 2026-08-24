@@ -87,6 +87,7 @@ const PLUGIN_PERMISSIONS = new Set<PluginPermission>([
   "media:library",
   "playlists:read",
   "playlists:write",
+  "hermes:hud",
   "network"
 ]);
 
@@ -2203,6 +2204,11 @@ const PLUGIN_SDK_SOURCE = `(() => {
       list: (libraryId) => request("playlists.list", { libraryId }),
       read: (libraryId, playlistId) => request("playlists.read", { libraryId, playlistId }),
       write: (libraryId, name, content) => request("playlists.write", { libraryId, name, content })
+    }),
+    hermesHud: Object.freeze({
+      getState: () => request("hermesHud.getState"),
+      open: () => request("hermesHud.open"),
+      close: () => request("hermesHud.close")
     }),
     onContext: (listener) => {
       listeners.add(listener);

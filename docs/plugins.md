@@ -100,6 +100,7 @@ host.onStorageChange(listener) notifies every live contribution of the same plug
 | `media:library` | `media.*` | User-selected music folders only; absolute paths are never exposed and audio is served through seekable `canvastty-media://` streams |
 | `playlists:read` | `playlists.list`, `playlists.read` | Reads `.m3u`, `.m3u8`, and `.pls` in a granted music folder plus `.json` under its `Playlists/` directory, up to 4 MB each |
 | `playlists:write` | `playlists.write` | Atomically writes a named playlist into the granted folder's `Playlists/` directory, up to 4 MB |
+| `hermes:hud` | `hermesHud.*` | Starts the installed Hermes Desktop in its real HUD mode, reads its live runtime state, or asks the app to quit; no arbitrary command or process API is exposed |
 | `network` | browser `fetch` | Allows HTTPS and loopback requests in the plugin CSP; no CanvasTTY credentials are attached |
 
 Declaring a permission does not expose a generic IPC channel. Unknown methods and permissions are rejected.
@@ -132,6 +133,9 @@ await host.request("launcher.open", { provider: "codex" });
 await host.canvas.open("notes");
 await host.request("window.open", { contributionId: "focus" });
 await host.request("browser.open", { url: "http://localhost:9210" });
+const hermes = await host.hermesHud.getState();
+if (hermes.state === "stopped") await host.hermesHud.open();
+if (hermes.state === "running") await host.hermesHud.close();
 
 const library = await host.media.pickLibrary();
 if (library) {
@@ -144,7 +148,7 @@ if (library) {
 }
 ```
 
-Supported methods are `host.getContext`, `storage.*`, `secrets.*`, `sessions.list`, `limits.get`, `launcher.open`, `canvas.open`, `external.open`, `browser.open`, `window.open`, `media.*`, and `playlists.*`. `canvas.open` opens or focuses a `canvas-app` contribution from the same plugin, placing it beside the requesting canvas card when possible. `browser.open` completes only after the workspace creates or focuses its Browser card and navigates it once; it accepts normalized HTTP(S) URLs only (not free-text searches, `file:`, `data:`, `javascript:`, `about:`, or credentialed URLs). `window.open` may target only a `window` contribution declared by the same plugin.
+Supported methods are `host.getContext`, `storage.*`, `secrets.*`, `sessions.list`, `limits.get`, `launcher.open`, `canvas.open`, `external.open`, `browser.open`, `window.open`, `media.*`, `playlists.*`, and `hermesHud.*`. `canvas.open` opens or focuses a `canvas-app` contribution from the same plugin, placing it beside the requesting canvas card when possible. `browser.open` completes only after the workspace creates or focuses its Browser card and navigates it once; it accepts normalized HTTP(S) URLs only (not free-text searches, `file:`, `data:`, `javascript:`, `about:`, or credentialed URLs). `window.open` may target only a `window` contribution declared by the same plugin. `hermesHud.open` and `hermesHud.close` use a fixed Hermes control contract; plugins cannot choose an executable, arguments, or PID.
 
 Use `storage` for non-sensitive JSON preferences and `secrets` only for credentials such as OAuth tokens or API keys. Secrets are string-only, limited to 32 keys / 16 KB per value / 64 KB per plugin, removed on uninstall, and never fall back to plaintext storage. A secret call fails explicitly when the operating system cannot provide protected encryption.
 
