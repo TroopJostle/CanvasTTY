@@ -12,6 +12,8 @@ permissions:
 jobs:
   package:
     name: Package ${{ matrix.name }}
+    env:
+      CANVASTTY_GITHUB_CLIENT_ID: ${{ vars.CANVASTTY_GITHUB_CLIENT_ID }}
     strategy:
       fail-fast: false
       matrix:

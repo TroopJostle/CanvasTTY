@@ -115,6 +115,7 @@ export function PluginSettingsSection({
   const [showcase, setShowcase] = useState<GithubPluginSearchResult[] | null>(null);
   const [loadingShowcase, setLoadingShowcase] = useState(false);
   const [githubStatus, setGithubStatus] = useState<GithubAuthStatus | null>(null);
+  const githubConfigured = githubStatus?.configured === true;
   const githubAuthorized = githubStatus?.authorized === true;
   const [hostVersion, setHostVersion] = useState<string>("");
   useEffect(() => {
@@ -178,6 +179,40 @@ export function PluginSettingsSection({
   const [updates, setUpdates] = useState<PluginUpdateStatus[] | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!githubCode) return;
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const poll = async (): Promise<void> => {
+      if (Date.now() >= githubCode.expiresAt) {
+        if (!cancelled) {
+          setGithubCode(null);
+          setError(t(locale, "githubAuthExpired"));
+        }
+        return;
+      }
+      try {
+        const status = await window.canvasTTY.githubAuth.status();
+        if (cancelled) return;
+        setGithubStatus(status);
+        if (status.authorized) {
+          setGithubCode(null);
+          return;
+        }
+      } catch {
+        // The main process owns the device flow; a transient status read can retry.
+      }
+      timer = window.setTimeout(() => void poll(), githubCode.interval * 1000);
+    };
+
+    timer = window.setTimeout(() => void poll(), githubCode.interval * 1000);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [githubCode, locale]);
 
   const inspect = async (): Promise<void> => {
     if (busy || sourceUrl.trim().length === 0) return;
@@ -291,26 +326,25 @@ export function PluginSettingsSection({
     window.setTimeout(() => setCodeCopied(false), 1600);
   };
 
-  const runGithubSignIn = async (): Promise<void> => {
+  const openGithubAuthorization = async (
+    flow: GithubDeviceFlowStart,
+    target: "embedded" | "external"
+  ): Promise<void> => {
+    copyGithubCode(flow.userCode);
+    const url = flow.verificationUri;
+    if (target === "embedded") await onOpenBrowser(url);
+    else await window.canvasTTY.githubAuth.openUrl(url);
+  };
+
+  const runGithubSignIn = async (target: "embedded" | "external"): Promise<void> => {
     if (githubBusy) return;
     setGithubBusy(true);
     setError(null);
     try {
       const flow = await window.canvasTTY.githubAuth.start();
       setGithubCode(flow);
-      setGithubStatus((current) => ({ authorized: false, login: null, tokenExpiresAt: null }));
-      // Poll the status until the user finishes authorizing in the browser
-      // (GitHub allows up to 15 minutes before the device code expires).
-      const started = Date.now();
-      while (Date.now() - started < 15 * 60 * 1000) {
-        await new Promise((resolve) => setTimeout(resolve, flow.interval * 1000));
-        const status = await window.canvasTTY.githubAuth.status();
-        if (status.authorized) {
-          setGithubStatus(status);
-          setGithubCode(null);
-          break;
-        }
-      }
+      setGithubStatus({ configured: true, authorized: false, login: null, tokenExpiresAt: null });
+      await openGithubAuthorization(flow, target);
     } catch (reason) {
       setError(errorMessage(reason, t(locale, "githubAuthNotConfigured")));
     } finally {
@@ -324,7 +358,12 @@ export function PluginSettingsSection({
     setError(null);
     try {
       await window.canvasTTY.githubAuth.signOut();
-      setGithubStatus({ authorized: false, login: null, tokenExpiresAt: null });
+      setGithubStatus((current) => ({
+        configured: current?.configured ?? false,
+        authorized: false,
+        login: null,
+        tokenExpiresAt: null
+      }));
       setGithubCode(null);
     } finally {
       setGithubBusy(false);
@@ -753,10 +792,15 @@ export function PluginSettingsSection({
       <section className="setting-group plugin-github-group">
         <h3>
           {t(locale, "githubAuthTitle")}
-          {!githubStatus?.authorized && !githubCode && (
-            <button type="button" className="plugin-updates-check plugin-github-signin" disabled={githubBusy} onClick={() => void runGithubSignIn()}>
-              {t(locale, "githubAuthSignIn")}
-            </button>
+          {githubConfigured && !githubStatus?.authorized && !githubCode && (
+            <span className="plugin-github-signin-actions">
+              <button type="button" className="plugin-updates-check plugin-github-signin" disabled={githubBusy} onClick={() => void runGithubSignIn("embedded")}>
+                {t(locale, "githubAuthSignInCanvas")}
+              </button>
+              <button type="button" className="plugin-updates-check plugin-github-signin-secondary" disabled={githubBusy} onClick={() => void runGithubSignIn("external")}>
+                {t(locale, "githubAuthSignInExternal")}
+              </button>
+            </span>
           )}
         </h3>
         {githubStatus?.authorized ? (
@@ -799,14 +843,17 @@ export function PluginSettingsSection({
               {t(locale, "githubAuthCode")}: <strong>{githubCode.userCode}</strong>
               {codeCopied && <span className="plugin-github-copied">{t(locale, "githubAuthCopied")}</span>}
             </p>
-            <a
-              href={`${githubCode.verificationUri}?user_code=${encodeURIComponent(githubCode.userCode)}`}
-              onClick={(event) => {
-                event.preventDefault();
-                void window.canvasTTY.githubAuth.openUrl(`${githubCode.verificationUri}?user_code=${encodeURIComponent(githubCode.userCode)}`);
-              }}
-            >{t(locale, "githubAuthOpen")}</a>
+            <div className="plugin-github-flow-actions">
+              <button type="button" disabled={githubBusy} onClick={() => void openGithubAuthorization(githubCode, "embedded")}>
+                {t(locale, "githubAuthOpenCanvas")}
+              </button>
+              <button type="button" disabled={githubBusy} onClick={() => void openGithubAuthorization(githubCode, "external")}>
+                {t(locale, "githubAuthOpenExternal")}
+              </button>
+            </div>
           </div>
+        ) : githubStatus && !githubConfigured ? (
+          <p className="plugin-github-unavailable" role="status">{t(locale, "githubAuthNotConfigured")}</p>
         ) : null}
       </section>
 

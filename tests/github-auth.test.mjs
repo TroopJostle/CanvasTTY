@@ -34,10 +34,12 @@ test("GitHub device flow persists an encrypted session atomically without reques
     const service = new GithubAuthService(userData, "client-id", {
       fetcher,
       safeStorage,
+      now: () => 1_000_000,
       delay: async () => undefined
     });
     const flow = await service.startDeviceFlow();
     assert.equal(flow.userCode, "ABCD-1234");
+    assert.equal(flow.expiresAt, 1_900_000);
     await waitFor(async () => (await service.status()).authorized);
     await waitFor(async () => {
       try {
@@ -58,6 +60,7 @@ test("GitHub device flow persists an encrypted session atomically without reques
     const restored = new GithubAuthService(userData, "client-id", { fetcher, safeStorage });
     await restored.load();
     assert.deepEqual(await restored.status(), {
+      configured: true,
       authorized: true,
       login: "howdeploy",
       tokenExpiresAt: null
@@ -150,7 +153,12 @@ test("signOut cancels an in-flight device flow and prevents a late token from be
     releaseLogin();
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.deepEqual(await service.status(), { authorized: false, login: null, tokenExpiresAt: null });
+    assert.deepEqual(await service.status(), {
+      configured: true,
+      authorized: false,
+      login: null,
+      tokenExpiresAt: null
+    });
     await assert.rejects(() => readFile(`${userData}/github-oauth.json`, "utf8"), { code: "ENOENT" });
   } finally {
     await rm(userData, { recursive: true, force: true });
@@ -190,6 +198,25 @@ test("starting a new device flow aborts the previous poll", async () => {
     assert.equal(pollSignals[1].aborted, false);
     await service.signOut();
     assert.equal(pollSignals[1].aborted, true);
+  } finally {
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test("reports an unconfigured OAuth client before starting device flow", async () => {
+  const userData = await mkdtemp(`${tmpdir()}/canvastty-github-auth-unconfigured-`);
+  try {
+    const service = new GithubAuthService(userData, "", { safeStorage });
+    assert.deepEqual(await service.status(), {
+      configured: false,
+      authorized: false,
+      login: null,
+      tokenExpiresAt: null
+    });
+    await assert.rejects(
+      () => service.startDeviceFlow(),
+      /GitHub OAuth is not configured \(missing client id\)\./
+    );
   } finally {
     await rm(userData, { recursive: true, force: true });
   }

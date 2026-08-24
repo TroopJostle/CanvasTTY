@@ -6,6 +6,7 @@ import { join, dirname } from "node:path";
 /** GitHub OAuth Device Flow for the plugin showcase. */
 
 export interface GithubAuthStatus {
+  configured: boolean;
   authorized: boolean;
   login: string | null;
   tokenExpiresAt: number | null;
@@ -24,8 +25,10 @@ interface SafeStorageLike {
   decryptString(value: Buffer): string;
 }
 
+type GithubFetcher = (input: string, init?: RequestInit) => Promise<Response>;
+
 export interface GithubAuthServiceOptions {
-  fetcher?: typeof fetch;
+  fetcher?: GithubFetcher;
   safeStorage?: SafeStorageLike;
   now?: () => number;
   delay?: (durationMs: number, signal: AbortSignal) => Promise<void>;
@@ -33,22 +36,23 @@ export interface GithubAuthServiceOptions {
   pollTimeoutMs?: number;
 }
 
+declare const __CANVASTTY_GITHUB_OAUTH_CLIENT_ID__: string | undefined;
+
 const AUTH_STORE_FILE = "github-oauth.json";
 const DEVICE_POLL_TIMEOUT_MS = 15 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
 
-/**
- * Public OAuth app identifier for official builds. Forks can set either
- * GITHUB_OAUTH_CLIENT_ID or CANVASTTY_GITHUB_CLIENT_ID at runtime/build time.
- */
-const DEFAULT_OAUTH_CLIENT_ID = "";
+/** Public OAuth app identifier baked into official builds by electron-vite. */
+const DEFAULT_OAUTH_CLIENT_ID = typeof __CANVASTTY_GITHUB_OAUTH_CLIENT_ID__ === "string"
+  ? __CANVASTTY_GITHUB_OAUTH_CLIENT_ID__
+  : "";
 
 export class GithubAuthService {
   private readonly storePath: string;
   private tokens: StoredTokens | null = null;
   private readonly clientId: string;
   private refreshPromise: Promise<string | null> | null = null;
-  private readonly fetcher: typeof fetch;
+  private readonly fetcher: GithubFetcher;
   private readonly secureStorage: SafeStorageLike | null;
   private readonly now: () => number;
   private readonly wait: (durationMs: number, signal: AbortSignal) => Promise<void>;
@@ -60,10 +64,11 @@ export class GithubAuthService {
 
   constructor(userDataPath: string, clientId?: string, options: GithubAuthServiceOptions = {}) {
     this.storePath = join(userDataPath, AUTH_STORE_FILE);
-    this.clientId = clientId
-      ?? process.env.GITHUB_OAUTH_CLIENT_ID
-      ?? process.env.CANVASTTY_GITHUB_CLIENT_ID
-      ?? DEFAULT_OAUTH_CLIENT_ID;
+    this.clientId = clientId !== undefined
+      ? clientId.trim()
+      : process.env.GITHUB_OAUTH_CLIENT_ID?.trim()
+        || process.env.CANVASTTY_GITHUB_CLIENT_ID?.trim()
+        || DEFAULT_OAUTH_CLIENT_ID.trim();
     this.fetcher = options.fetcher ?? globalThis.fetch;
     this.secureStorage = options.safeStorage ?? electron.safeStorage ?? null;
     this.now = options.now ?? Date.now;
@@ -120,11 +125,23 @@ export class GithubAuthService {
   }
 
   async status(): Promise<GithubAuthStatus> {
-    if (!this.tokens) return { authorized: false, login: null, tokenExpiresAt: null };
-    return { authorized: true, login: this.tokens.login, tokenExpiresAt: this.tokens.expiresAt };
+    if (!this.tokens) {
+      return { configured: this.clientConfigured, authorized: false, login: null, tokenExpiresAt: null };
+    }
+    return {
+      configured: this.clientConfigured,
+      authorized: true,
+      login: this.tokens.login,
+      tokenExpiresAt: this.tokens.expiresAt
+    };
   }
 
-  async startDeviceFlow(): Promise<{ userCode: string; verificationUri: string; interval: number }> {
+  async startDeviceFlow(): Promise<{
+    userCode: string;
+    verificationUri: string;
+    interval: number;
+    expiresAt: number;
+  }> {
     if (!this.clientConfigured) {
       throw new Error("GitHub OAuth is not configured (missing client id).");
     }
@@ -152,8 +169,12 @@ export class GithubAuthService {
       const userCode = payload.user_code;
       const verificationUri = githubVerificationUri(payload.verification_uri);
       const interval = typeof payload.interval === "number" && payload.interval > 0 ? payload.interval : 5;
+      const expiresIn = typeof payload.expires_in === "number" && payload.expires_in > 0
+        ? payload.expires_in
+        : this.pollTimeoutMs / 1000;
+      const flowLifetimeMs = Math.min(expiresIn * 1000, this.pollTimeoutMs);
 
-      void this.pollDeviceCode(deviceCode, interval, generation, controller.signal)
+      void this.pollDeviceCode(deviceCode, interval, flowLifetimeMs, generation, controller.signal)
         .catch((error) => {
           if (!isAbortError(error)) console.warn("CanvasTTY GitHub OAuth device poll failed.", error);
         })
@@ -161,7 +182,7 @@ export class GithubAuthService {
           if (this.deviceFlow?.generation === generation) this.deviceFlow = null;
         });
 
-      return { userCode, verificationUri, interval };
+      return { userCode, verificationUri, interval, expiresAt: this.now() + flowLifetimeMs };
     } catch (error) {
       if (this.deviceFlow?.generation === generation) this.deviceFlow = null;
       throw error;
@@ -190,12 +211,13 @@ export class GithubAuthService {
   private async pollDeviceCode(
     deviceCode: string,
     initialInterval: number,
+    lifetimeMs: number,
     generation: number,
     signal: AbortSignal
   ): Promise<void> {
     const started = this.now();
     let interval = initialInterval;
-    while (this.now() - started < this.pollTimeoutMs) {
+    while (this.now() - started < lifetimeMs) {
       await this.wait(interval * 1000, signal);
       if (!this.isCurrentFlow(generation, signal)) return;
 

@@ -308,6 +308,7 @@ export interface PluginUpdateStatus {
 }
 
 export interface GithubAuthStatus {
+  configured: boolean;
   authorized: boolean;
   login: string | null;
   tokenExpiresAt: number | null;
@@ -317,6 +318,7 @@ export interface GithubDeviceFlowStart {
   userCode: string;
   verificationUri: string;
   interval: number;
+  expiresAt: number;
 }
 
 export interface InstalledPlugin {

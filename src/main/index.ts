@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { app, BrowserWindow, dialog, protocol, safeStorage } from "electron";
+import { app, BrowserWindow, dialog, net, protocol, safeStorage } from "electron";
 import { IPC, type PluginCanvasRequest } from "../shared/contracts";
 import { registerIpc } from "./ipc/registerIpc";
 import { SettingsStore } from "./services/SettingsStore";
@@ -203,7 +203,9 @@ async function initializeServices(): Promise<void> {
   limitsService = new LimitsService(providerClis, app.getVersion());
   pluginManager = new PluginManager(app.getPath("userData"));
   await pluginManager.load();
-  githubAuth = new GithubAuthService(app.getPath("userData"));
+  githubAuth = new GithubAuthService(app.getPath("userData"), undefined, {
+    fetcher: (input, init) => net.fetch(input, init)
+  });
   await githubAuth.load();
   pluginManager.registerTokenProvider(() => githubAuth!.getToken());
   pluginMediaService = new PluginMediaService(

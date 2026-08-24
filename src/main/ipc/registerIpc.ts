@@ -529,13 +529,13 @@ export function registerIpc({
   ipcMain.handle(IPC.githubAuthStart, async (event) => {
     assertMainRenderer(event, getMainWindow);
     const flow = await githubAuth.startDeviceFlow();
-    // Do NOT open the browser automatically: the user copies the code by
-    // clicking it and opens the verification link themselves, which is a
-    // single deliberate action (no double alt-tab friction).
+    // The trusted renderer chooses the built-in or system browser after it
+    // receives this validated device-flow payload.
     return {
       userCode: flow.userCode,
       verificationUri: flow.verificationUri,
-      interval: flow.interval
+      interval: flow.interval,
+      expiresAt: flow.expiresAt
     };
   });
   ipcMain.handle(IPC.githubAuthSignOut, (event) => {

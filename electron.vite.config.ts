@@ -4,6 +4,13 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
   main: {
+    define: {
+      __CANVASTTY_GITHUB_OAUTH_CLIENT_ID__: JSON.stringify(
+        process.env.GITHUB_OAUTH_CLIENT_ID?.trim()
+          || process.env.CANVASTTY_GITHUB_CLIENT_ID?.trim()
+          || ""
+      )
+    },
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
