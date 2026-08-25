@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { parse as parseYaml } from "yaml";
 
 import {
@@ -44,10 +45,11 @@ test("Claude and Codex receive automatic lifecycle hooks without prompt or respo
 });
 
 test("OpenCode lifecycle plugin merges with browser MCP inline config", () => {
+  const pluginPath = "/opt/CanvasTTY/agent-runtime/opencode-plugin.mjs";
   const runtime = {
     OPENCODE_CONFIG_CONTENT: openCodeLifecycleConfig(
       JSON.stringify({ model: "provider/model", plugin: ["file:///existing.mjs"] }),
-      "/opt/CanvasTTY/agent-runtime/opencode-plugin.mjs"
+      pluginPath
     )
   };
   const browser = {
@@ -62,7 +64,7 @@ test("OpenCode lifecycle plugin merges with browser MCP inline config", () => {
   assert.deepEqual(merged.permission, { canvastty_browser: "allow" });
   assert.deepEqual(merged.plugin, [
     "file:///existing.mjs",
-    "file:///opt/CanvasTTY/agent-runtime/opencode-plugin.mjs"
+    pathToFileURL(pluginPath).href
   ]);
 });
 

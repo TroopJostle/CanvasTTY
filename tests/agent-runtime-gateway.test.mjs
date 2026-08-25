@@ -9,13 +9,19 @@ import test from "node:test";
 import { AGENT_RUNTIME_ENV, RUNTIME_PROTOCOL_VERSION } from "../src/agent-runtime/runtime-protocol.mjs";
 import { RuntimeGateway } from "../src/main/services/agent-runtime/RuntimeGateway.ts";
 
+const POSIX_RUNTIME_GATEWAY_TEST = {
+  skip: process.platform === "win32"
+    ? "POSIX socket behavior is covered on Unix; Windows named pipes have dedicated transport tests."
+    : false
+};
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "canvastty-runtime-gateway-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   return root;
 }
 
-test("RuntimeGateway accepts one authenticated hook event over a mode-0600 local socket", async (t) => {
+test("RuntimeGateway accepts one authenticated hook event over a mode-0600 local socket", POSIX_RUNTIME_GATEWAY_TEST, async (t) => {
   const root = await fixture(t);
   const signals = [];
   const gateway = new RuntimeGateway({ runtimeDirectory: root, onSignal: (id, signal) => signals.push({ id, signal }) });
@@ -45,7 +51,7 @@ test("RuntimeGateway accepts one authenticated hook event over a mode-0600 local
   assert.equal(JSON.stringify(signals).includes("must stay local"), false);
 });
 
-test("RuntimeGateway rejects a wrong capability and ignores a stale turn completion", async (t) => {
+test("RuntimeGateway rejects a wrong capability and ignores a stale turn completion", POSIX_RUNTIME_GATEWAY_TEST, async (t) => {
   const root = await fixture(t);
   const signals = [];
   const gateway = new RuntimeGateway({ runtimeDirectory: root, onSignal: (id, signal) => signals.push({ id, signal }) });
