@@ -60,9 +60,11 @@ npm run dev
 
 CanvasTTY includes a permissioned runtime for ready-to-run static GitHub packages: HOME widgets, canvas apps, and separate sandboxed windows. The host SDK now supports persistent user-selected music-library grants, seekable local audio streams, and bounded playlist import/export for full player plugins. See the [authoring and security guide](docs/plugins.md), [manifest schema](docs/canvastty-plugin.schema.json), and [TypeScript SDK declarations](docs/plugin-api.d.ts).
 
-Community plugins:
+Plugin examples:
 
-- [canvastty-music](https://github.com/Alitryel/canvastty-music) — a music player plugin in active development by [@Alitryel](https://github.com/Alitryel).
+- [canvastty-plugin-hermes-hud](https://github.com/howdeploy/canvastty-plugin-hermes-hud) — from the CanvasTTY author: a HOME widget that starts and stops an installed Hermes Desktop in HUD mode and shows the confirmed live process state; it uses only the narrow `hermes:hud` permission.
+- [canvastty-music](https://github.com/Alitryel/canvastty-music) — by [@Alitryel](https://github.com/Alitryel): a compact player for local audio folders and Yandex Music with a separate full-size library workspace, playlists, queues, and an optional animated pet.
+- [canvastty-plugin-hermes-dashboard](https://github.com/4444cjtr/canvastty-plugin-hermes-dashboard) — by [@4444cjtr](https://github.com/4444cjtr): a HOME widget that checks whether the local Hermes Agent dashboard is running, starts it through a small loopback helper, and opens it inside CanvasTTY as an embedded browser card.
 
 ## Built-in agent browser
 

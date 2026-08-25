@@ -60,9 +60,11 @@ npm run dev
 
 CanvasTTY 已提供带权限模型的静态 GitHub 运行时插件，可扩展 HOME 小组件、画布应用和独立 sandbox 窗口。Host SDK 支持持久化的用户音乐目录授权、可 seek 的本地音频流，以及受限的播放列表导入与导出，可用于实现完整的播放器插件。参见[插件开发与安全指南](docs/plugins.zh-CN.md)、[manifest schema](docs/canvastty-plugin.schema.json)和[TypeScript SDK 类型](docs/plugin-api.d.ts)。
 
-社区插件：
+插件示例：
 
-- [canvastty-music](https://github.com/Alitryel/canvastty-music) — 由 [@Alitryel](https://github.com/Alitryel) 正在积极开发的音乐播放器插件。
+- [canvastty-plugin-hermes-hud](https://github.com/howdeploy/canvastty-plugin-hermes-hud) — 来自 CanvasTTY 作者：一个 HOME 小组件，用于以 HUD 模式启动和退出已安装的 Hermes Desktop，并显示经过确认的实时进程状态；仅使用最小化的 `hermes:hud` 权限。
+- [canvastty-music](https://github.com/Alitryel/canvastty-music) — 由 [@Alitryel](https://github.com/Alitryel) 开发：一款紧凑的本地音频文件夹与 Yandex Music 播放器，附带独立的全尺寸曲库工作区、播放列表、播放队列和可选的动画宠物。
+- [canvastty-plugin-hermes-dashboard](https://github.com/4444cjtr/canvastty-plugin-hermes-dashboard) — 由 [@4444cjtr](https://github.com/4444cjtr) 开发：一个 HOME 小组件，用于检测本地 Hermes Agent dashboard 是否在运行，通过一个小型 loopback 辅助服务将其启动，并在 CanvasTTY 内以嵌入式浏览器卡片打开。
 
 ## 面向智能体的内置浏览器
 

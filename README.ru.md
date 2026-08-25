@@ -60,9 +60,11 @@ npm run dev
 
 CanvasTTY включает permissioned runtime для готовых статических GitHub-пакетов: HOME widgets, canvas apps и отдельные sandboxed окна. Host SDK поддерживает постоянные разрешения на выбранные пользователем музыкальные папки, seekable-потоки локального аудио и ограниченный импорт/экспорт плейлистов — этого достаточно для полноценного плеера-плагина. См. [руководство автора и модель безопасности](docs/plugins.ru.md), [схему manifest](docs/canvastty-plugin.schema.json) и [TypeScript-типы SDK](docs/plugin-api.d.ts).
 
-Плагины сообщества:
+Примеры плагинов:
 
-- [canvastty-music](https://github.com/Alitryel/canvastty-music) — музыкальный плеер, который активно разрабатывает [@Alitryel](https://github.com/Alitryel).
+- [canvastty-plugin-hermes-hud](https://github.com/howdeploy/canvastty-plugin-hermes-hud) — от автора CanvasTTY: HOME-виджет, который запускает и останавливает установленный Hermes Desktop в HUD-режиме и показывает подтверждённое состояние живого процесса; использует только узкое разрешение `hermes:hud`.
+- [canvastty-music](https://github.com/Alitryel/canvastty-music) — от [@Alitryel](https://github.com/Alitryel): компактный плеер для локальных папок с музыкой и Яндекс Музыки с отдельным полноразмерным окном библиотеки, плейлистами, очередями воспроизведения и опциональным анимированным питомцем.
+- [canvastty-plugin-hermes-dashboard](https://github.com/4444cjtr/canvastty-plugin-hermes-dashboard) — от [@4444cjtr](https://github.com/4444cjtr): HOME-виджет, который проверяет, запущен ли локальный Hermes Agent dashboard, запускает его через небольшой loopback-helper и открывает прямо в CanvasTTY как встроенную browser-карточку на канвасе.
 
 ## Встроенный браузер для агентов
 
