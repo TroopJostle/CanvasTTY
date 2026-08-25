@@ -22,6 +22,7 @@ import {
   shouldScrollTerminalPage,
   shouldSendTerminalLineBreak
 } from "./terminalShortcuts";
+import { fitTerminalPreservingViewport } from "./terminalViewport";
 import {
   constrainResize,
   snapMove,
@@ -200,7 +201,7 @@ export function TerminalCard({
 
     const fit = (): void => {
       try {
-        fitAddon.fit();
+        fitTerminalPreservingViewport(terminal, () => fitAddon.fit());
       } catch {
         // A hidden semantic-zoom surface has no measurable rows yet.
       }
@@ -464,7 +465,7 @@ export function TerminalCard({
       >
         <div className="terminal-card__summary-content">
           <ProviderIcon provider={session.provider} size="large" />
-          <div className="terminal-card__summary-copy"><strong>{session.title}</strong><span>{sessionStatusLabel(locale, session.status)}</span></div>
+          <div className="terminal-card__summary-copy"><strong>{session.title}</strong><span>{sessionStatusLabel(locale, session.status, session.provider)}</span></div>
         </div>
       </button>
       {RESIZE_DIRECTIONS.map((direction) => (

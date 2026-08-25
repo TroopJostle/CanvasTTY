@@ -39,6 +39,7 @@ import {
   AGENT_BROWSER_ENV,
   AgentBrowserBridge
 } from "../src/main/services/agent-browser/AgentBrowserBridge.ts";
+import { AGENT_RUNTIME_ENV } from "../src/agent-runtime/runtime-protocol.mjs";
 import { terminalEnvironment } from "../src/main/services/TerminalManager.ts";
 
 test("helper accepts only local socket and named-pipe endpoints", () => {
@@ -74,6 +75,15 @@ test("helper accepts only local socket and named-pipe endpoints", () => {
     CANVASTTY_AGENT_PROVIDER: "hermes",
     CANVASTTY_AGENT_CAPABILITY: "token"
   }, "linux").provider, "hermes");
+
+  assert.equal(readIdentity({
+    CANVASTTY_AGENT_BROWSER_ADDRESS: "/tmp/canvastty.sock",
+    CANVASTTY_AGENT_ID: "agent",
+    CANVASTTY_AGENT_CONNECTION_ID: "connection",
+    CANVASTTY_TERMINAL_SESSION_ID: "terminal",
+    CANVASTTY_AGENT_PROVIDER: "qwen",
+    CANVASTTY_AGENT_CAPABILITY: "token"
+  }, "linux").provider, "qwen");
 });
 
 test("MCP initialize authenticates the gateway and returns fixed provider-neutral instructions", async () => {
@@ -306,7 +316,7 @@ test("PTY bridge gives Hermes environment placeholders and restores config on cl
   assert.deepEqual(revoked, ["terminal-hermes"]);
 });
 
-test("terminal base environment never inherits a foreign CanvasTTY browser capability", () => {
+test("terminal base environment never inherits a foreign CanvasTTY capability", () => {
   const environment = terminalEnvironment({
     PATH: "/usr/bin",
     TERM: "foreign",
@@ -315,12 +325,17 @@ test("terminal base environment never inherits a foreign CanvasTTY browser capab
     [AGENT_BROWSER_ENV.connectionId]: "foreign-connection",
     [AGENT_BROWSER_ENV.terminalSessionId]: "foreign-terminal",
     [AGENT_BROWSER_ENV.provider]: "codex",
-    [AGENT_BROWSER_ENV.capabilityToken]: "foreign-capability"
+    [AGENT_BROWSER_ENV.capabilityToken]: "foreign-capability",
+    [AGENT_RUNTIME_ENV.address]: "/tmp/foreign-runtime.sock",
+    [AGENT_RUNTIME_ENV.terminalSessionId]: "foreign-runtime-terminal",
+    [AGENT_RUNTIME_ENV.provider]: "claude",
+    [AGENT_RUNTIME_ENV.capabilityToken]: "foreign-runtime-capability"
   });
 
   assert.equal(environment.PATH, "/usr/bin");
   assert.equal(environment.TERM, "xterm-256color");
   for (const key of Object.values(AGENT_BROWSER_ENV)) assert.equal(key in environment, false);
+  for (const key of Object.values(AGENT_RUNTIME_ENV)) assert.equal(key in environment, false);
 });
 
 test("MCP retries reuse a deterministic browser request id and can be canceled", async () => {

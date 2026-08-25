@@ -35,6 +35,11 @@ import {
 } from "./services/agent-browser/ProviderLaunch";
 import type { StdioHelperLaunch } from "./services/agent-browser/ProviderLaunch";
 import {
+  AgentRuntimeBridge,
+  RuntimeGateway
+} from "./services/agent-runtime";
+import type { RuntimeHookHelperLaunch } from "./services/agent-runtime/ProviderRuntimeLaunch";
+import {
   recoverHermesConfigurationOnStartup,
   resolveHermesHomeDirectory
 } from "./services/hermesConfig";
@@ -77,6 +82,9 @@ let canvasNavigationInput: CanvasNavigationInputController | null = null;
 let agentGateway: AgentGateway | null = null;
 let agentBrowserBridge: AgentBrowserBridge | null = null;
 let agentBrowserHelper: StdioHelperLaunch | null = null;
+let runtimeGateway: RuntimeGateway | null = null;
+let agentRuntimeBridge: AgentRuntimeBridge | null = null;
+let agentRuntimeHelper: RuntimeHookHelperLaunch | null = null;
 let providerClis: ProviderCliRegistry | null = null;
 const pluginWindows = new Map<BrowserWindow, string>();
 let servicesReady = false;
@@ -191,6 +199,39 @@ async function initializeServices(): Promise<void> {
       hermesHomeDirectory,
       kimiHomeDirectory
     });
+
+    const lifecycleRuntimeDirectory = join(userDataPath, "lifecycle", "runtime");
+    runtimeGateway = new RuntimeGateway({
+      runtimeDirectory: lifecycleRuntimeDirectory,
+      windowsHostPath,
+      onSignal: (terminalSessionId, signal) => {
+        terminalManager?.applyProviderSignal(terminalSessionId, {
+          kind: "lifecycle",
+          state: signal.state,
+          ...(signal.turnId ? { requestId: signal.turnId } : {})
+        });
+      }
+    });
+    await runtimeGateway.start();
+    const runtimeHelperPath = app.isPackaged
+      ? join(process.resourcesPath, "agent-runtime", "hook-helper.mjs")
+      : join(app.getAppPath(), "src", "agent-runtime", "hook-helper.mjs");
+    const openCodePluginPath = app.isPackaged
+      ? join(process.resourcesPath, "agent-runtime", "opencode-plugin.mjs")
+      : join(app.getAppPath(), "src", "agent-runtime", "opencode-plugin.mjs");
+    agentRuntimeHelper = {
+      command: process.execPath,
+      args: [runtimeHelperPath],
+      env: { ELECTRON_RUN_AS_NODE: "1" }
+    };
+    agentRuntimeBridge = new AgentRuntimeBridge(runtimeGateway, {
+      helper: agentRuntimeHelper,
+      runtimeDirectory: lifecycleRuntimeDirectory,
+      openCodePluginPath,
+      hermesHomeDirectory,
+      kimiHomeDirectory,
+      recoverOnStart: true
+    });
   } else {
     console.warn(WINDOWS_AGENT_GATEWAY_UNAVAILABLE);
   }
@@ -199,7 +240,7 @@ async function initializeServices(): Promise<void> {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(channel, payload);
     }
-  }, providerClis, agentBrowserBridge ?? undefined);
+  }, providerClis, agentBrowserBridge ?? undefined, agentRuntimeBridge ?? undefined);
   limitsService = new LimitsService(providerClis, app.getVersion());
   pluginManager = new PluginManager(app.getPath("userData"));
   await pluginManager.load();
@@ -298,7 +339,7 @@ async function loadApplication(window: BrowserWindow): Promise<void> {
 }
 
 function parseProviderSmokeTargets(value: string): ProviderSmokeTarget[] {
-  const allowed = new Set<ProviderSmokeTarget>(["direct", "claude", "codex", "kimi", "opencode", "hermes"]);
+  const allowed = new Set<ProviderSmokeTarget>(["direct", "claude", "codex", "qwen", "kimi", "opencode", "hermes"]);
   const targets = value.split(",").map((target) => target.trim()).filter(Boolean);
   if (targets.length === 0 || targets.some((target) => !allowed.has(target as ProviderSmokeTarget))) {
     throw new Error("CANVASTTY_PROVIDER_SMOKE contains an unsupported target.");
@@ -344,6 +385,9 @@ function buildProviderCliRegistry(): ProviderCliRegistry {
       : {}),
     ...(process.env.CANVASTTY_PROVIDER_SMOKE_CODEX_COMMAND
       ? { codex: process.env.CANVASTTY_PROVIDER_SMOKE_CODEX_COMMAND }
+      : {}),
+    ...(process.env.CANVASTTY_PROVIDER_SMOKE_QWEN_COMMAND
+      ? { qwen: process.env.CANVASTTY_PROVIDER_SMOKE_QWEN_COMMAND }
       : {}),
     ...(process.env.CANVASTTY_PROVIDER_SMOKE_OPENCODE_COMMAND
       ? { opencode: process.env.CANVASTTY_PROVIDER_SMOKE_OPENCODE_COMMAND }
@@ -424,6 +468,7 @@ async function shutdownServices(): Promise<void> {
   terminalManager?.disposeAll();
   limitsService?.dispose();
   if (agentGateway) await Promise.allSettled([agentGateway.close()]);
+  if (runtimeGateway) await Promise.allSettled([runtimeGateway.close()]);
   if (browserService) await Promise.allSettled([browserService.dispose()]);
   if (pluginManager) await Promise.allSettled([pluginManager.dispose()]);
 }

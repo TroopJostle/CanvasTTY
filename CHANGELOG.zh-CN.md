@@ -2,6 +2,15 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.8
+
+- Qwen Code 现已成为 HOME、Settings、CLI 发现、Normal/YOLO 配置、plugin SDK 与受限内置浏览器 MCP 桥接中的一等 launcher；使用官方 Qwen mark，所有配置仅作用于本次启动。
+- HOME 限额显示及其设置新增 Qwen 行。由于 Qwen Code 可连接不同云端或本地 model provider，且没有通用 quota-read protocol，CanvasTTY 会显示明确的不可用原因，不会伪造 usage data。
+- 智能体会话不再统一显示为已打开，而是使用受保护的本地 lifecycle gateway。Codex、Claude Code、Qwen Code、Kimi Code、OpenCode、Hermes 与 Grok Build 通过 provider hook 报告空闲、工作中和等待输入，且不转发 prompt/response 内容；Claude/Qwen terminal-title marker 保留为兼容 fallback。
+- 修复延迟 bootstrap snapshot 将已确认的智能体 lifecycle 重新覆盖为“状态不可用”的竞态。会话元数据现在携带由 main 进程维护的单调 revision，renderer 会拒绝陈旧状态，同时保留初始终端输出。
+- 调整卡片或应用窗口大小时会保留当前 terminal scrollback 位置，不再跳到会话开头。
+- 分段设置的键盘焦点现在保持在所选按钮内部，并恢复 wheel/pinch 捕获选择器与条件按键编辑器之间的正确间距。
+
 ## 1.2.7
 
 - 新增受权限控制的 Hermes Desktop HUD 插件桥接。主机仅通过 `hermes:hud` 提供状态查询、HUD 模式启动和关闭操作；插件无法选择可执行文件、参数或 PID。

@@ -16,7 +16,7 @@ test("stale settings keep every current agent visible in the HOME launcher", () 
 
 test("the HOME launcher column count follows the buttons that are actually visible", () => {
   assert.equal(homeLauncherColumnCount([]), 2);
-  assert.equal(homeLauncherColumnCount(["claude", "kimi", "grok"]), 5);
+  assert.equal(homeLauncherColumnCount(["claude", "qwen", "kimi", "grok"]), 6);
   assert.equal(homeLauncherColumnCount(AGENT_PROVIDERS), AGENT_PROVIDERS.length + 2);
 });
 
@@ -47,9 +47,9 @@ test("HOME limit visibility is canonical and independent from launcher visibilit
   assert.deepEqual(
     resolveHomeLimitProviders({
       homeLauncherProviders: ["grok"],
-      homeLimitProviders: ["grok", "kimi", "opencode", "codex"]
+      homeLimitProviders: ["grok", "qwen", "kimi", "opencode", "codex"]
     }),
-    ["codex", "kimi", "opencode", "grok"]
+    ["codex", "qwen", "kimi", "opencode", "grok"]
   );
   assert.deepEqual(resolveHomeLimitProviders({ homeLimitProviders: [] }), []);
 });

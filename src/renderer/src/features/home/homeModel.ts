@@ -7,7 +7,7 @@ import type {
   SessionSnapshot
 } from "../../../../shared/contracts";
 
-const DEFAULT_LIMIT_PROVIDERS: LimitProviderId[] = ["codex", "claude", "kimi", "opencode", "grok"];
+const DEFAULT_LIMIT_PROVIDERS: LimitProviderId[] = ["codex", "claude", "qwen", "kimi", "opencode", "grok"];
 
 export type LimitsLoadState = "loading" | "ready" | "error";
 export type HomeLimitReason = LimitUnavailableReason | "percentage-unavailable" | "reset-unavailable" | "refresh-error";

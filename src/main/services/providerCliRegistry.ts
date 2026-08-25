@@ -6,6 +6,7 @@ import type { AgentProviderId } from "../../shared/contracts.ts";
 export const PROVIDER_CLI_IDS: readonly AgentProviderId[] = Object.freeze([
   "codex",
   "claude",
+  "qwen",
   "kimi",
   "opencode",
   "hermes",
@@ -367,5 +368,7 @@ function isDirectory(path: string): boolean {
 
 function providerLabel(provider: AgentProviderId): string {
   if (provider === "opencode") return "OpenCode";
+  if (provider === "qwen") return "Qwen Code";
+  if (provider === "grok") return "Grok Build";
   return `${provider[0].toUpperCase()}${provider.slice(1)}`;
 }

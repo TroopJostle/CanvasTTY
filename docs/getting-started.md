@@ -7,7 +7,7 @@
 - Node.js and npm.
 - A native compiler toolchain supported by `node-pty` on your platform.
 - A graphical desktop session capable of running Electron.
-- Optional agent CLIs — `codex`, `claude`, `kimi`, `opencode`, or `hermes` — installed and available in `PATH` for the launchers you intend to use.
+- Optional agent CLIs — `codex`, `claude`, `qwen`, `kimi`, `opencode`, `hermes`, or `grok` — installed and available in `PATH` for the launchers you intend to use.
 
 CanvasTTY does not install or authenticate agent CLIs for you. Complete each provider's own login flow before expecting its sessions or subscription limits to work.
 
@@ -79,6 +79,6 @@ A working CLI session and a readable subscription-quota API are separate capabil
 
 ### A terminal exists but is not marked working
 
-This is expected. A newly opened PTY is `idle`. Only a structured provider lifecycle signal may set `working` or `needs_approval`; terminal text and PTY existence are not activity telemetry.
+CanvasTTY shows live `idle`/`working`/`needs_approval` for Codex, Claude Code, Qwen Code, Kimi Code, OpenCode, Hermes, and Grok Build from provider lifecycle hooks. An agent stays `unavailable` until its first machine-readable signal; terminal text and PTY existence are not activity telemetry.
 
 Next: read the [browser and audit-log guide](browser.md), [author a widget](widget-authoring.md), or study [metrics and telemetry](metrics-and-telemetry.md).

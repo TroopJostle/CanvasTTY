@@ -20,10 +20,21 @@ import type {
   PreparedAgentBrowserPtyLaunch
 } from "./agent-browser/AgentBrowserBridge.ts";
 import { AGENT_BROWSER_ENV } from "./agent-browser/AgentBrowserBridge.ts";
+import type {
+  AgentRuntimeLaunchCoordinator,
+  PreparedAgentRuntimePtyLaunch
+} from "./agent-runtime/AgentRuntimeBridge.ts";
+import { AGENT_RUNTIME_ENV } from "../../agent-runtime/runtime-protocol.mjs";
+import { mergeOpenCodeLaunchEnvironment } from "./agent-runtime/ProviderRuntimeLaunch.ts";
 import { tryPtyOperation } from "./ptySafety.ts";
 import { terminalFailureDetails } from "./terminalFailureDetails.ts";
 import { resolveTerminalLaunch } from "./terminalLaunch.ts";
 import type { ProviderCliRegistry, UnavailableProviderCli } from "./providerCliRegistry.ts";
+import {
+  createProviderLifecycleParser,
+  initialSessionStatus,
+  type ProviderLifecycleParser
+} from "./providerLifecycle.ts";
 
 const MAX_SCROLLBACK_CHARS = 240_000;
 const OUTPUT_BATCH_MS = 16;
@@ -40,6 +51,8 @@ interface ManagedSession {
   pendingOutput: string[];
   outputTimer: ReturnType<typeof setTimeout> | null;
   agentBrowser: PreparedAgentBrowserPtyLaunch | null;
+  agentRuntime: PreparedAgentRuntimePtyLaunch | null;
+  lifecycle: ProviderLifecycleParser | null;
 }
 
 export interface ProviderLifecycleSignal {
@@ -58,15 +71,18 @@ export class TerminalManager {
   private readonly emit: Emit;
   private readonly providerClis: ProviderCliRegistry;
   private readonly agentBrowser?: AgentBrowserLaunchCoordinator;
+  private readonly agentRuntime?: AgentRuntimeLaunchCoordinator;
 
   constructor(
     emit: Emit,
     providerClis: ProviderCliRegistry,
-    agentBrowser?: AgentBrowserLaunchCoordinator
+    agentBrowser?: AgentBrowserLaunchCoordinator,
+    agentRuntime?: AgentRuntimeLaunchCoordinator
   ) {
     this.emit = emit;
     this.providerClis = providerClis;
     this.agentBrowser = agentBrowser;
+    this.agentRuntime = agentRuntime;
   }
 
   list(): SessionSnapshot[] {
@@ -80,6 +96,7 @@ export class TerminalManager {
     const id = randomUUID();
     const metadata: SessionMetadata = {
       id,
+      revision: 0,
       provider: request.provider,
       profile: request.profile,
       title: request.title?.trim() || defaultTitle(request.provider, request.cwd),
@@ -87,7 +104,7 @@ export class TerminalManager {
       cwd: request.cwd,
       position: request.position,
       size: DEFAULT_TERMINAL_SIZE,
-      status: "idle",
+      status: initialSessionStatus(request.provider),
       startedAt: Date.now(),
       exitCode: null,
       failureDetails: null
@@ -103,10 +120,14 @@ export class TerminalManager {
       bufferLength: 0,
       pendingOutput: [],
       outputTimer: null,
-      agentBrowser: launched.agentBrowser
+      agentBrowser: launched.agentBrowser,
+      agentRuntime: launched.agentRuntime,
+      lifecycle: createProviderLifecycleParser(request.provider, request.cwd)
     };
     this.sessions.set(id, session);
     if (launched.process) this.bindProcess(id, session, launched.process);
+    const runtimeStatus = this.agentRuntime?.currentStatus(id);
+    if (runtimeStatus) session.metadata.status = runtimeStatus;
 
     this.emitSession(metadata);
     return snapshot(session);
@@ -125,14 +146,18 @@ export class TerminalManager {
     );
     session.process = launched.process;
     session.agentBrowser = launched.agentBrowser;
+    session.agentRuntime = launched.agentRuntime;
+    session.lifecycle = createProviderLifecycleParser(session.metadata.provider, session.metadata.cwd);
     session.metadata.startedAt = Date.now();
     if (launched.failure) {
       applyLaunchFailure(session.metadata, launched.failure);
     } else {
-      session.metadata.status = "idle";
+      session.metadata.status = initialSessionStatus(session.metadata.provider);
       session.metadata.exitCode = null;
       session.metadata.failureDetails = null;
       if (launched.process) this.bindProcess(id, session, launched.process);
+      const runtimeStatus = this.agentRuntime?.currentStatus(id);
+      if (runtimeStatus) session.metadata.status = runtimeStatus;
     }
     this.emitSession(session.metadata);
     return snapshot(session);
@@ -199,6 +224,7 @@ export class TerminalManager {
     this.flushOutput(id, session);
     this.sessions.delete(id);
     session.agentBrowser?.cleanup();
+    session.agentRuntime?.cleanup();
     if (session.process) {
       try {
         session.process.kill();
@@ -216,6 +242,7 @@ export class TerminalManager {
   }
 
   private emitSession(metadata: SessionMetadata): void {
+    metadata.revision += 1;
     this.emit(IPC.terminalSession, { session: structuredClone(metadata) });
   }
 
@@ -227,20 +254,30 @@ export class TerminalManager {
   ): {
     process: IPty | null;
     agentBrowser: PreparedAgentBrowserPtyLaunch | null;
+    agentRuntime: PreparedAgentRuntimePtyLaunch | null;
     failure: UnavailableProviderCli | null;
   } {
     const providerCli = provider === "terminal" ? undefined : this.providerClis.get(provider);
     if (providerCli?.state === "unavailable") {
-      return { process: null, agentBrowser: null, failure: providerCli };
+      return { process: null, agentBrowser: null, agentRuntime: null, failure: providerCli };
     }
-    const agentBrowser = provider === "terminal" || provider === "grok"
+    const agentRuntime = provider === "terminal"
       ? null
-      : this.agentBrowser?.prepareLaunch({ terminalSessionId: id, provider, cwd }) ?? null;
+      : this.agentRuntime?.prepareLaunch({ terminalSessionId: id, provider, cwd }) ?? null;
+    let agentBrowser: PreparedAgentBrowserPtyLaunch | null = null;
     try {
+      agentBrowser = provider === "terminal" || provider === "grok"
+        ? null
+        : this.agentBrowser?.prepareLaunch({ terminalSessionId: id, provider, cwd }) ?? null;
       const baseEnvironment = terminalEnvironment();
       const browserEnvironment = agentBrowser?.environment ?? {};
-      const launch = resolveTerminalLaunch(provider, profile, agentBrowser?.args ?? [], {
-        environment: { ...baseEnvironment, ...browserEnvironment },
+      const runtimeEnvironment = agentRuntime?.environment ?? {};
+      const providerEnvironment = provider === "opencode"
+        ? mergeOpenCodeLaunchEnvironment(browserEnvironment, runtimeEnvironment)
+        : { ...browserEnvironment, ...runtimeEnvironment };
+      const providerArgs = [...(agentRuntime?.args ?? []), ...(agentBrowser?.args ?? [])];
+      const launch = resolveTerminalLaunch(provider, profile, providerArgs, {
+        environment: { ...baseEnvironment, ...providerEnvironment },
         ...(providerCli ? { providerCli } : {})
       });
       return {
@@ -249,13 +286,15 @@ export class TerminalManager {
           cols: 100,
           rows: 30,
           cwd,
-          env: { ...baseEnvironment, ...browserEnvironment, ...launch.environment }
+          env: { ...baseEnvironment, ...providerEnvironment, ...launch.environment }
         }),
         agentBrowser,
+        agentRuntime,
         failure: null
       };
     } catch (error) {
       agentBrowser?.cleanup();
+      agentRuntime?.cleanup();
       throw error;
     }
   }
@@ -265,6 +304,8 @@ export class TerminalManager {
       const current = this.sessions.get(id);
       if (!current || current !== session || current.process !== process) return;
 
+      const lifecycleState = current.lifecycle?.push(data);
+      if (lifecycleState) this.applyProviderSignal(id, { kind: "lifecycle", state: lifecycleState });
       appendScrollback(current, data);
       this.queueOutput(id, current, data);
     });
@@ -281,6 +322,8 @@ export class TerminalManager {
         : terminalFailureDetails(current.bufferChunks.slice(current.bufferStart).join(""));
       current.agentBrowser?.cleanup();
       current.agentBrowser = null;
+      current.agentRuntime?.cleanup();
+      current.agentRuntime = null;
       this.emitSession(current.metadata);
     });
   }
@@ -314,7 +357,10 @@ function applyLaunchFailure(metadata: SessionMetadata, failure: UnavailableProvi
 export function terminalEnvironment(
   source: Readonly<Record<string, string | undefined>> = process.env
 ): Record<string, string> {
-  const reserved = new Set<string>(Object.values(AGENT_BROWSER_ENV));
+  const reserved = new Set<string>([
+    ...Object.values(AGENT_BROWSER_ENV),
+    ...Object.values(AGENT_RUNTIME_ENV)
+  ]);
   const environment = Object.fromEntries(
     Object.entries(source).filter((entry): entry is [string, string] => (
       typeof entry[1] === "string" && !reserved.has(entry[0])
@@ -328,6 +374,8 @@ function defaultTitle(provider: ProviderId, cwd: string): string {
   if (provider === "terminal") return `Terminal · ${project}`;
   if (provider === "opencode") return `${project} · OpenCode`;
   if (provider === "hermes") return `${project} · Hermes`;
+  if (provider === "qwen") return `${project} · Qwen Code`;
+  if (provider === "grok") return `${project} · Grok Build`;
   return `${project} · ${provider[0].toUpperCase()}${provider.slice(1)}`;
 }
 
@@ -340,7 +388,7 @@ function assertDirectory(cwd: string): void {
 }
 
 function assertCreateRequest(request: CreateSessionRequest): void {
-  const providers = new Set<ProviderId>(["terminal", "codex", "claude", "kimi", "opencode", "hermes", "grok"]);
+  const providers = new Set<ProviderId>(["terminal", "codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"]);
   if (!request || !providers.has(request.provider)) throw new Error("Unknown terminal provider.");
   if (request.profile !== "normal" && request.profile !== "yolo") throw new Error("Unknown launch profile.");
   if (typeof request.cwd !== "string" || request.cwd.length === 0) throw new Error("Project folder is required.");

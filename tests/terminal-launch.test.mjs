@@ -48,6 +48,18 @@ test("provider launch uses the registry executable and scoped YOLO arguments", (
   });
 });
 
+test("Qwen uses its native YOLO flag and keeps per-launch browser arguments", () => {
+  const providerCli = available("qwen", "/resolved/qwen");
+  const launch = resolveTerminalLaunch("qwen", "yolo", ["--mcp-config", "{}"], { providerCli });
+  assert.deepEqual(launch.args, ["--yolo", "--mcp-config", "{}"]);
+});
+
+test("Claude keeps launch-scoped adapter arguments in their supplied order", () => {
+  const providerCli = available("claude", "/resolved/claude");
+  const launch = resolveTerminalLaunch("claude", "normal", ["--mcp-config", "{}"], { providerCli });
+  assert.deepEqual(launch.args, ["--mcp-config", "{}"]);
+});
+
 test("OpenCode merges YOLO config with the registry child environment", () => {
   const providerCli = available("opencode", "/test-home/.local/bin/opencode");
   const launch = resolveTerminalLaunch("opencode", "yolo", [], {

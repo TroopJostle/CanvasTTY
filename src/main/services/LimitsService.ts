@@ -93,16 +93,17 @@ export class LimitsService {
 
   private async refresh(): Promise<LimitsSnapshot> {
     const checkedAt = Date.now();
-    const [codex, claude, kimi, opencode, grok] = await Promise.all([
+    const [codex, claude, qwen, kimi, opencode, grok] = await Promise.all([
       this.loadCodex(checkedAt),
       this.loadClaude(checkedAt),
+      this.loadQwen(checkedAt),
       this.loadKimi(checkedAt),
       this.loadOpenCode(checkedAt),
       this.loadGrok(checkedAt)
     ]);
     const value: LimitsSnapshot = {
       fetchedAt: Date.now(),
-      providers: [codex, claude, kimi, opencode, grok]
+      providers: [codex, claude, qwen, kimi, opencode, grok]
     };
 
     this.cache = { cachedAt: Date.now(), value };
@@ -207,6 +208,16 @@ export class LimitsService {
       }
       return unavailable("kimi", "kimi-usage-api", reason, checkedAt);
     }
+  }
+
+  private async loadQwen(checkedAt: number): Promise<ProviderLimitsSnapshot> {
+    if (this.providerClis.get("qwen").state === "unavailable") {
+      return unavailable("qwen", "qwen-cli", "cli-not-found", checkedAt);
+    }
+    // Qwen Code can use Alibaba Coding Plan, arbitrary OpenAI-compatible APIs,
+    // or local models. Its CLI exposes no provider-neutral read-only quota
+    // protocol, so CanvasTTY must not synthesize one usage value for all of them.
+    return unavailable("qwen", "qwen-cli", "unsupported-protocol", checkedAt);
   }
 
   private async loadOpenCode(checkedAt: number): Promise<ProviderLimitsSnapshot> {

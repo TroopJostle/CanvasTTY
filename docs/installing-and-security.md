@@ -25,7 +25,7 @@ Download artifacts only from the repository's [GitHub Releases](https://github.c
 | Data | Location and lifetime |
 |:--|:--|
 | CanvasTTY settings | Electron's per-user `userData` directory (`~/.config/canvastty` on typical Linux desktops, `%APPDATA%\canvastty` on Windows, `~/Library/Application Support/canvastty` on macOS) |
-| Provider credentials | The local credential store owned by the installed Codex, Claude, Kimi, OpenCode, Hermes, or Grok Build CLI; CanvasTTY does not copy it |
+| Provider credentials | The local credential store owned by the installed Codex, Claude, Qwen Code, Kimi, OpenCode, Hermes, or Grok Build CLI; CanvasTTY does not copy it |
 | Temporary provider browser bridge | Kimi fallback and Hermes MCP entries are journaled, scoped to owning CanvasTTY sessions, and restored on final PTY exit or recovered after an interrupted launch; capability secrets are never written as literals |
 | PTY scrollback | Bounded main-process memory for the live app session; not saved in the repository |
 | Home media | The user's original local file; settings retain only its local path |

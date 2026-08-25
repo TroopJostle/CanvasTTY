@@ -447,12 +447,12 @@ export function HomeZone({
                   className="usage-row"
                   type="button"
                   onClick={() => onFocusSession(session)}
-                  aria-label={`${session.title}, ${sessionStatusLabel(locale, session.status)}`}
+                  aria-label={`${session.title}, ${sessionStatusLabel(locale, session.status, session.provider)}`}
                   title={failureDetails ? undefined : session.title}
                 >
                   <ProviderIcon provider={session.provider} size="medium" />
                   <span className="usage-row__copy">
-                    <strong>{sessionStatusLabel(locale, session.status)}</strong>
+                    <strong>{sessionStatusLabel(locale, session.status, session.provider)}</strong>
                     <span>{session.title}</span>
                   </span>
                   {!failureDetails && statusIcon && <UiIcon name={statusIcon} size={24} />}

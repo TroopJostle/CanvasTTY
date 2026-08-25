@@ -34,6 +34,15 @@ test("Claude provider transcript accepts stream-json tool_use and tool_result bl
   assert.doesNotThrow(() => assertProviderTranscript("claude", transcript));
 });
 
+test("Qwen provider transcript accepts its Claude-compatible stream-json blocks", () => {
+  const transcript = jsonl([
+    { type: "assistant", message: { content: [{ type: "tool_use", id: "call-1", name: expectedTool, input: {} }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "call-1", content: browserResult, is_error: false }] } },
+    { type: "result", result: "CANVASTTY_PROVIDER_SMOKE_OK" }
+  ]);
+  assert.doesNotThrow(() => assertProviderTranscript("qwen", transcript));
+});
+
 test("Codex provider transcript deduplicates started and completed events for one MCP item", () => {
   const item = {
     id: "item-1",
@@ -202,6 +211,10 @@ test("provider argv keeps approval scoped and disables unrelated Claude configur
   const kimi = providerSmokeArguments("kimi", launchArgs, "/tmp/smoke");
   assert.equal(kimi.includes("--yolo"), false);
   assert.equal(optionValue(kimi, "--output-format"), "stream-json");
+
+  const qwen = providerSmokeArguments("qwen", launchArgs, "/tmp/smoke");
+  assert.deepEqual(qwen.slice(0, 2), ["--provider-launch-marker", "-p"]);
+  assert.equal(optionValue(qwen, "--output-format"), "stream-json");
 
   const opencode = providerSmokeArguments("opencode", launchArgs, "/tmp/smoke");
   assert.equal(opencode[0], "run");

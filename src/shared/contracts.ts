@@ -1,8 +1,8 @@
-export type ProviderId = "terminal" | "codex" | "claude" | "kimi" | "opencode" | "hermes" | "grok";
+export type ProviderId = "terminal" | "codex" | "claude" | "qwen" | "kimi" | "opencode" | "hermes" | "grok";
 export type AgentProviderId = Exclude<ProviderId, "terminal">;
-export type LimitProviderId = Extract<AgentProviderId, "codex" | "claude" | "kimi" | "opencode" | "grok">;
+export type LimitProviderId = Extract<AgentProviderId, "codex" | "claude" | "qwen" | "kimi" | "opencode" | "grok">;
 export type LaunchProfileId = "normal" | "yolo";
-export type SessionStatus = "idle" | "working" | "needs_approval" | "done" | "failed";
+export type SessionStatus = "idle" | "working" | "needs_approval" | "unavailable" | "done" | "failed";
 export type PaletteId = "sage" | "lilac" | "night";
 export type HomeAccentPresetId = "classic" | "warm" | "cool" | "mono" | "custom";
 export type CanvasColorId = "sage" | "lilac" | "night" | "sand" | "mist" | "rose" | "slate";
@@ -151,6 +151,7 @@ export interface CreateSessionRequest {
 
 export interface SessionMetadata {
   id: string;
+  revision: number;
   provider: ProviderId;
   profile: LaunchProfileId;
   title: string;
@@ -426,6 +427,7 @@ export type BrowserAgentProvider = AgentProviderId | "unknown";
 export const BROWSER_PROVIDER_COLORS: Record<BrowserAgentProvider, string> = {
   claude: "#D97757",
   codex: "#10A37F",
+  qwen: "#6D44E8",
   kimi: "#7C5CFC",
   opencode: "#5A5858",
   hermes: "#D6A700",
@@ -701,6 +703,7 @@ export interface BrowserActivityStateEvent {
 export type LimitSource =
   | "codex-app-server"
   | "claude-usage-api"
+  | "qwen-cli"
   | "kimi-usage-api"
   | "opencode-go-usage-api"
   | "grok-billing-api";

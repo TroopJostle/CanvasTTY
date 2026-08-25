@@ -117,6 +117,13 @@ export class ProviderLaunchAdapters {
         releaseConfiguration() {}
       };
     }
+    if (provider === "qwen") {
+      return {
+        args: qwenMcpArgs(this.options.helper),
+        environment: {},
+        releaseConfiguration() {}
+      };
+    }
     if (provider === "opencode") {
       return {
         args: [],
@@ -258,6 +265,29 @@ export function codexMcpArgs(helper: StdioHelperLaunch): string[] {
     "disabled_tools=[]"
   ].join(",");
   return ["-c", `${prefix}={${table}}`];
+}
+
+export function qwenMcpArgs(helper: StdioHelperLaunch): string[] {
+  validateStdioHelperLaunch(helper);
+  const allowedTools = APPROVED_BROWSER_TOOL_NAMES
+    .map((tool) => `mcp__${MCP_SERVER_NAME}__${tool}`)
+    .join(",");
+  const config = {
+    mcpServers: {
+      [MCP_SERVER_NAME]: {
+        command: helper.command,
+        args: helper.args,
+        ...(helper.env && Object.keys(helper.env).length > 0 ? { env: helper.env } : {}),
+        includeTools: [...APPROVED_BROWSER_TOOL_NAMES]
+      }
+    }
+  };
+  return [
+    "--mcp-config",
+    canonicalStringify(config),
+    "--allowed-tools",
+    allowedTools
+  ];
 }
 
 export function probeKimiPerRunMcpConfig(cli: AvailableProviderCli): boolean {

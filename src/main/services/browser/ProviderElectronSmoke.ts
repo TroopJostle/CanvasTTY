@@ -155,6 +155,9 @@ export function providerSmokeArguments(provider: AgentProvider, launchArgs: stri
       "--verbose"
     ];
   }
+  if (provider === "qwen") {
+    return [...launchArgs, "-p", prompt, "--output-format", "stream-json"];
+  }
   if (provider === "opencode") {
     return ["run", ...launchArgs, "--format", "json", "--dir", cwd, prompt];
   }
@@ -277,7 +280,7 @@ function collectToolCalls(provider: AgentProvider, events: unknown[]): ProviderT
         const id = typeof call?.id === "string" ? call.id : `${path}.tool_calls.${index}`;
         record(id, fn.name);
       });
-    } else if (provider === "claude" && object.type === "tool_use" && typeof object.name === "string") {
+    } else if ((provider === "claude" || provider === "qwen") && object.type === "tool_use" && typeof object.name === "string") {
       const id = typeof object.id === "string" ? object.id : path;
       record(id, object.name);
     } else if (provider === "codex" && object.type === "mcp_tool_call") {
@@ -327,7 +330,7 @@ function hasSuccessfulToolResult(
     }
     const object = asRecord(value);
     if (!object) return;
-    if (provider === "claude"
+    if ((provider === "claude" || provider === "qwen")
       && object.type === "tool_result"
       && object.tool_use_id === call.id
       && object.is_error !== true

@@ -33,6 +33,7 @@ function snapshot(windows) {
     providers: [
       { provider: "codex", state: "available", source: "codex-app-server", fetchedAt: 1_786_100_000_000, windows },
       { provider: "claude", state: "unavailable", source: "claude-usage-api", checkedAt: 1_786_100_000_000, reason: "subscription-required" },
+      { provider: "qwen", state: "unavailable", source: "qwen-cli", checkedAt: 1_786_100_000_000, reason: "unsupported-protocol" },
       { provider: "kimi", state: "unavailable", source: "kimi-usage-api", checkedAt: 1_786_100_000_000, reason: "not-authenticated" }
     ]
   };
@@ -100,9 +101,9 @@ test("shows only the independently selected HOME limit providers", () => {
     limitWindow({ id: "codex:primary", minutes: 300, percent: 39 })
   ]);
   assert.deepEqual(
-    selectHomeModel([], currentSnapshot, "ready", 1_786_100_000_000, ["grok", "kimi", "opencode", "codex"])
+    selectHomeModel([], currentSnapshot, "ready", 1_786_100_000_000, ["grok", "qwen", "kimi", "opencode", "codex"])
       .limitRows.map((row) => row.provider),
-    ["codex", "kimi", "opencode", "grok"]
+    ["codex", "qwen", "kimi", "opencode", "grok"]
   );
   assert.deepEqual(
     selectHomeModel([], currentSnapshot, "ready", 1_786_100_000_000, []).limitRows,

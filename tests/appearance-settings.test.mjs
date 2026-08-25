@@ -67,13 +67,20 @@ test("HOME state accents use bounded rails instead of rounded inset shadows", ()
   assert.doesNotMatch(styles, /\.limit-row--(?:stale|error)\s*\{[^}]*box-shadow:/u);
 });
 
+test("segmented settings keep focus inside the button and separate conditional editors", () => {
+  const styles = readFileSync(new URL("../src/renderer/src/styles/app.css", import.meta.url), "utf8");
+  assert.match(styles, /\.segmented__button\s*\{[^}]*outline:\s*0;[^}]*box-shadow\s+\.15s\s+ease/u);
+  assert.match(styles, /\.segmented__button:focus-visible\s*\{[^}]*box-shadow:\s*inset\s+0\s+0\s+0\s+2px/u);
+  assert.match(styles, /\.setting-group\s*>\s*\.segmented\s*\+\s*\.shortcut-editor\s*\{[^}]*margin-top:\s*8px;/u);
+});
+
 test("the HOME limits grid follows the selected provider count", () => {
   const styles = readFileSync(new URL("../src/renderer/src/styles/app.css", import.meta.url), "utf8");
   assert.match(styles, /\.limits-list\s*\{[^}]*repeat\(var\(--limit-rows,\s*3\),\s*minmax\(0,\s*1fr\)\)/u);
   assert.doesNotMatch(styles, /\.limits-list\s*\{[^}]*repeat\(3,\s*minmax\(0,\s*1fr\)\)/u);
 });
 
-test("four or five HOME limit rows switch to bounded compact geometry", () => {
+test("four or more HOME limit rows switch to bounded compact geometry", () => {
   const styles = readFileSync(new URL("../src/renderer/src/styles/app.css", import.meta.url), "utf8");
   const source = readFileSync(new URL("../src/renderer/src/features/home/HomeZone.tsx", import.meta.url), "utf8");
   assert.match(source, /home\.limitRows\.length\s*>=\s*4\s*\?\s*"limits-list--dense"/u);

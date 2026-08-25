@@ -6,6 +6,7 @@ import kimiIcon from "../assets/providers/kimi.ico";
 import openCodeIcon from "../assets/providers/opencode.svg";
 import hermesIcon from "../assets/providers/hermes.png";
 import grokIcon from "../assets/providers/grok.png";
+import qwenIcon from "../assets/providers/qwen.svg";
 
 interface ProviderIconProps {
   provider: ProviderId;
@@ -15,6 +16,7 @@ interface ProviderIconProps {
 const PROVIDER_ASSETS = {
   codex: codexIcon,
   claude: claudeIcon,
+  qwen: qwenIcon,
   kimi: kimiIcon,
   opencode: openCodeIcon,
   hermes: hermesIcon,

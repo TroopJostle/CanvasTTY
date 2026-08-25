@@ -41,7 +41,7 @@ export interface BrowserCoreLike {
 
 export type AgentDisconnectReason = "closed" | "expired" | "revoked" | "protocol_error";
 
-export type AgentProvider = "claude" | "codex" | "kimi" | "opencode" | "hermes";
+export type AgentProvider = "claude" | "codex" | "qwen" | "kimi" | "opencode" | "hermes";
 
 export interface AgentCapability {
   agentId: string;
@@ -158,7 +158,7 @@ export function parseClientMessage(value: unknown, authenticated: boolean): Clie
     ]);
     if (authenticated) throw bridgeError("AUTH_REPLAYED", "This connection is already authenticated.", false);
     const provider = requiredString(object, "provider", 16);
-    if (provider !== "claude" && provider !== "codex" && provider !== "kimi" && provider !== "opencode" && provider !== "hermes") {
+    if (provider !== "claude" && provider !== "codex" && provider !== "qwen" && provider !== "kimi" && provider !== "opencode" && provider !== "hermes") {
       throw bridgeError("AUTH_INVALID", "Unknown agent provider.", false);
     }
     return {

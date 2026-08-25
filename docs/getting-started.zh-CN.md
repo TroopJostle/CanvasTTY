@@ -7,7 +7,7 @@
 - Node.js 与 npm。
 - 当前平台上 `node-pty` 支持的原生编译工具链。
 - 能运行 Electron 的图形桌面环境。
-- 可选：安装 `codex`、`claude`、`kimi`、`opencode` 或 `hermes` 智能体 CLI 并加入 `PATH`，只装你打算使用的启动器对应的即可。
+- 可选：安装 `codex`、`claude`、`qwen`、`kimi`、`opencode`、`hermes` 或 `grok` 智能体 CLI 并加入 `PATH`，只装你打算使用的启动器对应的即可。
 
 CanvasTTY 不会替你安装或登录智能体 CLI。想让某个服务商的会话或订阅限额可用，请先完成该服务商自己的登录流程。
 
@@ -79,6 +79,6 @@ npm run dev
 
 ### 终端已打开，却没有标记为“工作中”
 
-这是预期行为。新打开的 PTY 初始状态是 `idle`。只有结构化的服务商生命周期信号才能把状态设为 `working` 或 `needs_approval`；PTY 存在和终端文本本身都不构成活动遥测。
+CanvasTTY 根据 provider lifecycle hook，为 Codex、Claude Code、Qwen Code、Kimi Code、OpenCode、Hermes 与 Grok Build 显示实时 `idle`、`working`、`needs_approval`。智能体在首个机器可读 signal 前保持 `unavailable`；PTY 存在和终端文本本身都不构成活动遥测。
 
 下一步：阅读[浏览器与审计日志](browser.zh-CN.md)、[编写小组件](widget-authoring.zh-CN.md)，或查看[指标与遥测](metrics-and-telemetry.zh-CN.md)。

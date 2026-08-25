@@ -17,6 +17,7 @@ import {
   ProviderLaunchAdapters,
   claudeMcpArgs,
   codexMcpArgs,
+  qwenMcpArgs,
   recoverKimiConfigurationOnStartup,
   resolveKimiHomeDirectory
 } from "../src/main/services/agent-browser/ProviderLaunch.ts";
@@ -158,6 +159,15 @@ test("codexMcpArgs returns one complete table that replaces a same-name global s
     `${prefix}={command=${JSON.stringify(helper.command)},args=[${helper.args.map(JSON.stringify).join(",")}],env={\"ELECTRON_RUN_AS_NODE\"=\"1\"},env_vars=[\"CANVASTTY_AGENT_BROWSER_ADDRESS\",\"CANVASTTY_AGENT_ID\",\"CANVASTTY_AGENT_CONNECTION_ID\",\"CANVASTTY_TERMINAL_SESSION_ID\",\"CANVASTTY_AGENT_PROVIDER\",\"CANVASTTY_AGENT_CAPABILITY\"],enabled=true,required=true,default_tools_approval_mode=\"approve\",enabled_tools=[${APPROVED_BROWSER_TOOL_NAMES.map(JSON.stringify).join(",")}],disabled_tools=[]}`
   ];
   assert.deepEqual(codexMcpArgs(helper), expected);
+});
+
+test("qwenMcpArgs injects one launch-only MCP server without hiding unrelated user servers", () => {
+  assert.deepEqual(qwenMcpArgs(helper), [
+    "--mcp-config",
+    `{"mcpServers":{"canvastty_browser":{"args":["--socket","/tmp/socket with spaces.sock","--quote=\\"yes\\""],"command":"/opt/CanvasTTY Agent/helper.mjs","env":{"ELECTRON_RUN_AS_NODE":"1"},"includeTools":[${APPROVED_BROWSER_TOOL_NAMES.map(JSON.stringify).join(",")}]}}}`,
+    "--allowed-tools",
+    APPROVED_BROWSER_TOOL_NAMES.map((tool) => `mcp__canvastty_browser__${tool}`).join(",")
+  ]);
 });
 
 test("OpenCode receives one per-launch MCP override without losing existing inline config", () => {

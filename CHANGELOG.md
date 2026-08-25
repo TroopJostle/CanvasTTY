@@ -2,6 +2,15 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.2.8
+
+- Added Qwen Code as a first-class launcher across HOME, Settings, CLI discovery, Normal/YOLO profiles, the plugin SDK, and the scoped built-in-browser MCP bridge, using the official Qwen mark and launch-only configuration.
+- Added a Qwen row to HOME limit display and its settings. Because Qwen Code can use unrelated cloud or local model providers and exposes no universal quota-read protocol, CanvasTTY reports an explicit unavailable reason instead of inventing usage data.
+- Replaced the generic open state for agent sessions with an authenticated local lifecycle gateway. Codex, Claude Code, Qwen Code, Kimi Code, OpenCode, Hermes, and Grok Build now report idle, working, and input-needed through provider hooks without forwarding prompt or response content; Claude/Qwen terminal-title markers remain a compatibility fallback.
+- Fixed delayed bootstrap snapshots reverting an already observed agent lifecycle back to unavailable. Session metadata now carries a main-owned monotonic revision, and the renderer rejects stale status updates while preserving initial terminal output.
+- Preserved the active terminal scrollback position when a card or application window is resized instead of jumping to the beginning of the session.
+- Kept segmented-setting keyboard focus inside its selected button and restored spacing between the wheel/pinch capture selector and its conditional key editor.
+
 ## 1.2.7
 
 - Added a permission-gated Hermes Desktop HUD bridge for plugins. The host exposes only status, open-in-HUD, and close operations through `hermes:hud`; plugins cannot choose an executable, arguments, or PID.

@@ -20,7 +20,6 @@ import type {
   PluginUpdateStatus,
   ProviderId,
   SessionBounds,
-  SessionMetadata,
   SessionSnapshot,
   WindowState
 } from "../../shared/contracts";
@@ -40,6 +39,11 @@ import { PluginBrowserOpenQueue } from "./features/plugins/PluginBrowserOpenQueu
 import { WorkspaceCanvas } from "./features/workspace/WorkspaceCanvas";
 import type { LimitsLoadState } from "./features/home/homeModel";
 import { t } from "./lib/i18n";
+import {
+  mergeSessionSnapshots,
+  upsertSession,
+  upsertSnapshot
+} from "./lib/sessionReconciliation";
 import { isRenameInputTarget, isShortcutCaptureTarget, matchesShortcut } from "./lib/shortcuts";
 import { homeGridPixelSize, homeLayoutFitsGrid, placeHomeWidget } from "./features/home/homeLayout";
 
@@ -53,8 +57,8 @@ const FALLBACK_SETTINGS: AppSettings = {
   palette: "sage",
   homeAccentPreset: "classic",
   homeAccentColors: { ...DEFAULT_HOME_ACCENT_COLORS },
-  homeLauncherProviders: ["codex", "claude", "kimi", "opencode", "hermes", "grok"],
-  homeLimitProviders: ["codex", "claude", "kimi", "opencode", "grok"],
+  homeLauncherProviders: ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"],
+  homeLimitProviders: ["codex", "claude", "qwen", "kimi", "opencode", "grok"],
   canvasColor: "sage",
   pattern: "dots",
   snapToGrid: true,
@@ -199,15 +203,17 @@ export function App(): React.JSX.Element {
       setRenamingSessionId((current) => current === id ? null : current);
     });
 
-    void Promise.all([
-      window.canvasTTY.settings.get(),
-      window.canvasTTY.terminal.list(),
-      window.canvasTTY.plugins.list()
-    ])
-      .then(async ([loadedSettings, loadedSessions, loadedPlugins]) => {
+    const settingsRequest = window.canvasTTY.settings.get();
+    const sessionsRequest = window.canvasTTY.terminal.list().then((loadedSessions) => {
+      if (active) setSessions((current) => mergeSessionSnapshots(current, loadedSessions));
+      return loadedSessions;
+    });
+    const pluginsRequest = window.canvasTTY.plugins.list();
+
+    void Promise.all([settingsRequest, sessionsRequest, pluginsRequest])
+      .then(async ([loadedSettings, _loadedSessions, loadedPlugins]) => {
         if (!active) return;
         setSettings(loadedSettings);
-        setSessions(loadedSessions);
         setPlugins(loadedPlugins);
         if (loadedSettings.browserCanvas && browserApi) {
           const browserState = await browserApi.open();
@@ -861,18 +867,6 @@ export function App(): React.JSX.Element {
       <Toast message={toast} />
     </div>
   );
-}
-
-function upsertSession(sessions: SessionSnapshot[], metadata: SessionMetadata): SessionSnapshot[] {
-  const existing = sessions.find((session) => session.id === metadata.id);
-  const next: SessionSnapshot = { ...metadata, buffer: existing?.buffer ?? "" };
-  return upsertSnapshot(sessions, next);
-}
-
-function upsertSnapshot(sessions: SessionSnapshot[], next: SessionSnapshot): SessionSnapshot[] {
-  const index = sessions.findIndex((session) => session.id === next.id);
-  if (index < 0) return [...sessions, next];
-  return sessions.map((session) => session.id === next.id ? next : session);
 }
 
 function nextSessionPosition(index: number, homeGridSize: HomeGridSize): Point {

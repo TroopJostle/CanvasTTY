@@ -195,6 +195,8 @@ test("agent bridge parser requires exact outer and nested schema keys", () => {
   assert.deepEqual(parseClientMessage(openCodeAuth, false), openCodeAuth);
   const hermesAuth = authMessage({ ...capability, provider: "hermes" });
   assert.deepEqual(parseClientMessage(hermesAuth, false), hermesAuth);
+  const qwenAuth = authMessage({ ...capability, provider: "qwen" });
+  assert.deepEqual(parseClientMessage(qwenAuth, false), qwenAuth);
   assert.throws(
     () => parseClientMessage({ ...validAuth, unexpected: true }, false),
     assertBridgeError("INVALID_REQUEST")

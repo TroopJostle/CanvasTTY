@@ -73,6 +73,13 @@ test("PTY output is batched before crossing into the renderer", async () => {
   assert.match(source, /bufferChunks\.slice\(session\.bufferStart\)\.join\(""\)/);
 });
 
+test("session metadata revisions advance before lifecycle events cross IPC", async () => {
+  const source = await readFile(terminalManagerPath, "utf8");
+
+  assert.match(source, /revision: 0/);
+  assert.match(source, /metadata\.revision \+= 1;\s*this\.emit\(IPC\.terminalSession/);
+});
+
 test("terminal viewport keeps the palette background after row-sized fits", async () => {
   const [source, styles] = await Promise.all([
     readFile(terminalCardPath, "utf8"),
@@ -81,6 +88,13 @@ test("terminal viewport keeps the palette background after row-sized fits", asyn
 
   assert.match(source, /"--terminal-background": terminalBackground/);
   assert.match(styles, /\.terminal-card__surface \.xterm-viewport \{ background-color: var\(--terminal-background, #202430\); \}/);
+});
+
+test("terminal fits preserve the active scrollback viewport", async () => {
+  const source = await readFile(terminalCardPath, "utf8");
+
+  assert.match(source, /fitTerminalPreservingViewport\(terminal, \(\) => fitAddon\.fit\(\)\)/);
+  assert.doesNotMatch(source, /const fit = \(\): void => \{\s*try \{\s*fitAddon\.fit\(\)/);
 });
 
 test("renaming is inline and does not join the xterm mount dependencies", async () => {
@@ -113,7 +127,7 @@ test("an exited PTY can restart in place without recreating its xterm card", asy
 
   assert.match(manager, /restart\(id: string\): SessionSnapshot/);
   assert.match(manager, /session\.metadata\.exitCode === null/);
-  assert.match(manager, /session\.metadata\.status = "idle"/);
+  assert.match(manager, /session\.metadata\.status = initialSessionStatus\(session\.metadata\.provider\)/);
   assert.match(manager, /session\.metadata\.failureDetails = null/);
   assert.match(manager, /if \(launched\.process\) this\.bindProcess\(id, session, launched\.process\)/);
   assert.match(card, /shouldRestartExitedTerminal\(event, sessionExited\.current\)/);

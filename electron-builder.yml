@@ -21,6 +21,10 @@ extraResources:
     to: agent-browser
     filter:
       - "*.mjs"
+  - from: src/agent-runtime
+    to: agent-runtime
+    filter:
+      - "*.mjs"
   - from: agent/browser
     to: agent/browser
     filter:

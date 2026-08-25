@@ -12,14 +12,15 @@ export const PROVIDERS: Record<ProviderId, ProviderDefinition> = {
   terminal: { id: "terminal", label: "Terminal" },
   codex: { id: "codex", label: "Codex", dangerKey: "dangerCodex" },
   claude: { id: "claude", label: "Claude", dangerKey: "dangerClaude" },
+  qwen: { id: "qwen", label: "Qwen Code", dangerKey: "dangerQwen" },
   kimi: { id: "kimi", label: "Kimi", dangerKey: "dangerKimi" },
   opencode: { id: "opencode", label: "OpenCode", limitsLabel: "OpenCode Go", dangerKey: "dangerOpenCode" },
   hermes: { id: "hermes", label: "Hermes", dangerKey: "dangerHermes" },
   grok: { id: "grok", label: "Grok Build", dangerKey: "dangerGrok" }
 };
 
-export const AGENT_PROVIDERS: AgentProviderId[] = ["codex", "claude", "kimi", "opencode", "hermes", "grok"];
-export const LIMIT_PROVIDERS: LimitProviderId[] = ["codex", "claude", "kimi", "opencode", "grok"];
+export const AGENT_PROVIDERS: AgentProviderId[] = ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"];
+export const LIMIT_PROVIDERS: LimitProviderId[] = ["codex", "claude", "qwen", "kimi", "opencode", "grok"];
 
 export function resolveHomeLauncherProviders(
   settings: Pick<Partial<AppSettings>, "homeLauncherProviders">

@@ -21,8 +21,8 @@ const fallback = {
     settings: "#D5A2C9",
     media: "#D5A2C9"
   },
-  homeLauncherProviders: ["codex", "claude", "kimi", "opencode", "hermes", "grok"],
-  homeLimitProviders: ["codex", "claude", "kimi", "opencode", "grok"],
+  homeLauncherProviders: ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"],
+  homeLimitProviders: ["codex", "claude", "qwen", "kimi", "opencode", "grok"],
   canvasColor: "sage",
   pattern: "dots",
   snapToGrid: true,
@@ -214,6 +214,56 @@ test("a persisted pre-Grok launcher subset gains Grok exactly once", async () =>
   }
 });
 
+test("the pre-Qwen default selections gain Qwen while curated subsets remain unchanged", async () => {
+  const defaultDir = await mkdtemp(join(tmpdir(), "canvastty-settings-qwen-default-"));
+  const curatedDir = await mkdtemp(join(tmpdir(), "canvastty-settings-qwen-curated-"));
+  try {
+    const preQwen = {
+      ...fallback,
+      settingsVersion: 5,
+      homeLauncherProviders: ["codex", "claude", "kimi", "opencode", "hermes", "grok"],
+      homeLimitProviders: ["codex", "claude", "kimi", "opencode", "grok"]
+    };
+    await writeFile(join(defaultDir, "settings.json"), JSON.stringify(preQwen));
+    const migrated = await new SettingsStore(defaultDir, "en").load();
+    assert.deepEqual(migrated.homeLauncherProviders, fallback.homeLauncherProviders);
+    assert.deepEqual(migrated.homeLimitProviders, fallback.homeLimitProviders);
+
+    await writeFile(join(curatedDir, "settings.json"), JSON.stringify({
+      ...preQwen,
+      homeLauncherProviders: ["codex", "hermes"],
+      homeLimitProviders: ["kimi"]
+    }));
+    const curated = await new SettingsStore(curatedDir, "en").load();
+    assert.deepEqual(curated.homeLauncherProviders, ["codex", "hermes"]);
+    assert.deepEqual(curated.homeLimitProviders, ["kimi"]);
+  } finally {
+    await Promise.all([
+      rm(defaultDir, { recursive: true, force: true }),
+      rm(curatedDir, { recursive: true, force: true })
+    ]);
+  }
+});
+
+test("the Qwen migration does not rerun the older expanded-limit migration", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "canvastty-settings-qwen-limit-subset-"));
+  try {
+    await writeFile(join(dir, "settings.json"), JSON.stringify({
+      ...fallback,
+      settingsVersion: 5,
+      homeLimitProviders: ["codex", "claude", "kimi"]
+    }));
+    const loaded = await new SettingsStore(dir, "en").load();
+    assert.deepEqual(loaded.homeLimitProviders, ["codex", "claude", "kimi"]);
+
+    const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
+    assert.equal(persisted.settingsVersion, 6);
+    assert.deepEqual(persisted.homeLimitProviders, ["codex", "claude", "kimi"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("the limit-display migration preserves a version-three launcher subset", async () => {
   const dir = await mkdtemp(join(tmpdir(), "canvastty-settings-limit-migration-"));
   try {
@@ -229,7 +279,7 @@ test("the limit-display migration preserves a version-three launcher subset", as
     assert.deepEqual(loaded.homeLimitProviders, fallback.homeLimitProviders);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 5);
+    assert.equal(persisted.settingsVersion, 6);
     assert.deepEqual(persisted.homeLimitProviders, fallback.homeLimitProviders);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -248,7 +298,7 @@ test("the expanded limit migration preserves a curated version-four subset", asy
     assert.deepEqual(loaded.homeLimitProviders, ["kimi"]);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 5);
+    assert.equal(persisted.settingsVersion, 6);
     assert.deepEqual(persisted.homeLimitProviders, ["kimi"]);
   } finally {
     await rm(dir, { recursive: true, force: true });

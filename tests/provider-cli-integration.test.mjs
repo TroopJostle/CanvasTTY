@@ -19,7 +19,7 @@ function unavailableRegistry() {
     get: unavailable,
     snapshot() {
       return Object.fromEntries(
-        ["codex", "claude", "kimi", "opencode", "hermes", "grok"].map((provider) => [provider, unavailable(provider)])
+        ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"].map((provider) => [provider, unavailable(provider)])
       );
     }
   };
@@ -62,12 +62,43 @@ test("limits short-circuit every missing provider to cli-not-found", async () =>
     const snapshot = await service.get();
     assert.deepEqual(
       snapshot.providers.map(({ provider, state, reason }) => ({ provider, state, reason })),
-      ["codex", "claude", "kimi", "opencode", "grok"].map((provider) => ({
+      ["codex", "claude", "qwen", "kimi", "opencode", "grok"].map((provider) => ({
         provider,
         state: "unavailable",
         reason: "cli-not-found"
       }))
     );
+  } finally {
+    service.dispose();
+  }
+});
+
+test("installed Qwen reports its real provider-neutral quota limitation", async () => {
+  const registry = unavailableRegistry();
+  const service = new LimitsService({
+    get(provider) {
+      if (provider !== "qwen") return registry.get(provider);
+      return Object.freeze({
+        state: "available",
+        provider,
+        executable: "/resolved/qwen",
+        launcher: "native",
+        environment: Object.freeze({ PATH: "/resolved:/usr/bin" }),
+        checked: Object.freeze([{ path: "/resolved/qwen", result: "selected" }])
+      });
+    },
+    snapshot: registry.snapshot
+  }, "test");
+  try {
+    const qwen = (await service.get()).providers.find((provider) => provider.provider === "qwen");
+    assert.ok(qwen);
+    assert.deepEqual(qwen, {
+      provider: "qwen",
+      state: "unavailable",
+      source: "qwen-cli",
+      reason: "unsupported-protocol",
+      checkedAt: qwen.checkedAt
+    });
   } finally {
     service.dispose();
   }

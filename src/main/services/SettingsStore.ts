@@ -44,12 +44,16 @@ const HOME_ACCENT_PRESETS = new Set<HomeAccentPresetId>(["classic", "warm", "coo
 const CANVAS_COLORS = new Set<CanvasColorId>(["sage", "lilac", "night", "sand", "mist", "rose", "slate"]);
 const PATTERNS = new Set<CanvasPatternId>(["dots", "grid", "waves", "diagonal", "rings", "none"]);
 const MEDIA_FITS = new Set<MediaFit>(["cover", "contain"]);
-const SETTINGS_VERSION = 5;
+const SETTINGS_VERSION = 6;
 const GROK_LAUNCHER_SETTINGS_VERSION = 3;
+const EXPANDED_LIMIT_SETTINGS_VERSION = 5;
+const QWEN_SETTINGS_VERSION = 6;
 const LEGACY_AGENT_PROVIDERS: AgentProviderId[] = ["codex", "claude", "kimi", "opencode", "hermes"];
-const AGENT_PROVIDERS = new Set<AgentProviderId>([...LEGACY_AGENT_PROVIDERS, "grok"]);
+const PRE_QWEN_AGENT_PROVIDERS: AgentProviderId[] = [...LEGACY_AGENT_PROVIDERS, "grok"];
+const AGENT_PROVIDERS = new Set<AgentProviderId>(["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"]);
 const LEGACY_LIMIT_PROVIDERS: LimitProviderId[] = ["codex", "claude", "kimi"];
-const LIMIT_PROVIDERS: LimitProviderId[] = [...LEGACY_LIMIT_PROVIDERS, "opencode", "grok"];
+const PRE_QWEN_LIMIT_PROVIDERS: LimitProviderId[] = [...LEGACY_LIMIT_PROVIDERS, "opencode", "grok"];
+const LIMIT_PROVIDERS: LimitProviderId[] = ["codex", "claude", "qwen", "kimi", "opencode", "grok"];
 const LIMIT_PROVIDER_SET = new Set<LimitProviderId>(LIMIT_PROVIDERS);
 const EDGE_PAN_SPEEDS = new Set<EdgePanSpeed>(["slow", "normal", "fast"]);
 const ZOOM_SENSITIVITIES = new Set<ZoomSensitivity>(["slow", "normal", "fast"]);
@@ -86,8 +90,15 @@ export class SettingsStore {
       const needsGrokLauncherMigration = persistedVersion < GROK_LAUNCHER_SETTINGS_VERSION
         && persistedLauncherProviders !== null
         && !persistedLauncherProviders.includes("grok");
-      const needsExpandedLimitMigration = persistedVersion < SETTINGS_VERSION
+      const needsExpandedLimitMigration = persistedVersion < EXPANDED_LIMIT_SETTINGS_VERSION
         && isLegacyDefaultLimitSelection(persistedLimitProviders);
+      const needsQwenLauncherMigration = persistedVersion < QWEN_SETTINGS_VERSION
+        && (
+          isPreQwenDefaultSelection(persistedLauncherProviders, PRE_QWEN_AGENT_PROVIDERS)
+          || isPreQwenDefaultSelection(persistedLauncherProviders, LEGACY_AGENT_PROVIDERS)
+        );
+      const needsQwenLimitMigration = persistedVersion < QWEN_SETTINGS_VERSION
+        && isPreQwenDefaultSelection(persistedLimitProviders, PRE_QWEN_LIMIT_PROVIDERS);
       this.hasPersistedLegacyWheelCapture = Object.hasOwn(source, "zoomOverApplications");
       const needsMigration = !("useScrollWheelToZoom" in source)
         || !("canvasNavigationOverride" in source)
@@ -105,6 +116,12 @@ export class SettingsStore {
         migratedCandidate = { ...migratedCandidate, homeLauncherProviders: [...persistedLauncherProviders, "grok"] };
       }
       if (needsExpandedLimitMigration) {
+        migratedCandidate = { ...migratedCandidate, homeLimitProviders: [...LIMIT_PROVIDERS] };
+      }
+      if (needsQwenLauncherMigration && persistedLauncherProviders) {
+        migratedCandidate = { ...migratedCandidate, homeLauncherProviders: [...AGENT_PROVIDERS] };
+      }
+      if (needsQwenLimitMigration) {
         migratedCandidate = { ...migratedCandidate, homeLimitProviders: [...LIMIT_PROVIDERS] };
       }
       this.value = normalizeSettings(migratedCandidate, {
@@ -165,6 +182,12 @@ function isLegacyDefaultLimitSelection(candidate: unknown[] | null): boolean {
   return candidate !== null
     && candidate.length === LEGACY_LIMIT_PROVIDERS.length
     && LEGACY_LIMIT_PROVIDERS.every((provider) => candidate.includes(provider));
+}
+
+function isPreQwenDefaultSelection<T extends string>(candidate: unknown[] | null, providers: readonly T[]): boolean {
+  return candidate !== null
+    && candidate.length === providers.length
+    && providers.every((provider) => candidate.includes(provider));
 }
 
 function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform): AppSettings {
