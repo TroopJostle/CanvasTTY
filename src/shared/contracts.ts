@@ -100,6 +100,11 @@ export interface SessionBounds {
   size: Size;
 }
 
+export interface StickyNote extends SessionBounds {
+  id: string;
+  text: string;
+}
+
 export interface CameraState extends Point {
   zoom: number;
 }
@@ -135,6 +140,7 @@ export interface AppSettings {
   homeGridSize: HomeGridSize;
   homeLayout: HomeWidgetPlacement[];
   pluginCanvas: PluginCanvasInstance[];
+  stickyNotes: StickyNote[];
   browserCanvas: BrowserCanvasState | null;
   browserAgentAccess: boolean;
   browserShowAgentPresence: boolean;

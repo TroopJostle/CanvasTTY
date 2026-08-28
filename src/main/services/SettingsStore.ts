@@ -20,6 +20,7 @@ import type {
   PaletteId,
   PluginCanvasInstance,
   ShortcutBindings,
+  StickyNote,
   ZoomSensitivity
 } from "../../shared/contracts";
 import {
@@ -108,6 +109,7 @@ export class SettingsStore {
         || !("homeAccentColors" in source)
         || !("homeLauncherProviders" in source)
         || !("homeLimitProviders" in source)
+        || !("stickyNotes" in source)
         || !("canvasColor" in source)
         || source.canvasColor === "palette"
         || source.settingsVersion !== SETTINGS_VERSION;
@@ -222,6 +224,7 @@ function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform
     homeGridSize: { ...DEFAULT_HOME_GRID_SIZE },
     homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
     pluginCanvas: [],
+    stickyNotes: [],
     browserCanvas: null,
     browserAgentAccess: true,
     browserShowAgentPresence: true,
@@ -268,6 +271,7 @@ export function normalizeSettings(
     homeGridSize
   );
   const pluginCanvas = normalizePluginCanvas(source.pluginCanvas, fallback.pluginCanvas ?? []);
+  const stickyNotes = normalizeStickyNotes(source.stickyNotes, fallback.stickyNotes ?? []);
   const browserCanvas = normalizeBrowserCanvas(source.browserCanvas, fallback.browserCanvas ?? null);
   const homeAccentColors = normalizeHomeAccentColors(
     source.homeAccentColors,
@@ -342,6 +346,7 @@ export function normalizeSettings(
     homeGridSize,
     homeLayout,
     pluginCanvas,
+    stickyNotes,
     browserCanvas,
     browserAgentAccess: typeof source.browserAgentAccess === "boolean"
       ? source.browserAgentAccess
@@ -517,6 +522,30 @@ function normalizePluginCanvas(candidate: unknown, fallback: readonly PluginCanv
     ids.add(source.id);
   }
   return instances;
+}
+
+function normalizeStickyNotes(candidate: unknown, fallback: readonly StickyNote[]): StickyNote[] {
+  if (!Array.isArray(candidate)) return fallback.map((note) => structuredClone(note));
+
+  const notes: StickyNote[] = [];
+  const ids = new Set<string>();
+  for (const value of candidate.slice(0, 128)) {
+    if (!value || typeof value !== "object") continue;
+    const source = value as Partial<StickyNote>;
+    if (!isInstanceId(source.id) || ids.has(source.id)) continue;
+    if (typeof source.text !== "string" || !isFinitePoint(source.position) || !isFiniteSize(source.size)) continue;
+    notes.push({
+      id: source.id,
+      text: source.text.slice(0, 20_000),
+      position: { x: source.position.x, y: source.position.y },
+      size: {
+        width: clamp(source.size.width, 180, 1_000),
+        height: clamp(source.size.height, 140, 800)
+      }
+    });
+    ids.add(source.id);
+  }
+  return notes;
 }
 
 function normalizeBrowserCanvas(candidate: unknown, fallback: BrowserCanvasState | null): BrowserCanvasState | null {

@@ -21,6 +21,7 @@ import type {
   ProviderId,
   SessionBounds,
   SessionSnapshot,
+  StickyNote,
   WindowState
 } from "../../shared/contracts";
 import {
@@ -83,6 +84,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   homeGridSize: { ...DEFAULT_HOME_GRID_SIZE },
   homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
   pluginCanvas: [],
+  stickyNotes: [],
   browserCanvas: null,
   browserAgentAccess: true,
   browserShowAgentPresence: true,
@@ -397,6 +399,44 @@ export function App(): React.JSX.Element {
     setSettings((current) => ({ ...current, browserCanvas }));
     void saveSettings({ browserCanvas });
   }, [saveSettings]);
+
+  const createStickyNote = useCallback((): void => {
+    const viewport = canvasViewportSize();
+    const size = { width: 280, height: 220 };
+    const cascade = (settings.stickyNotes.length % 8) * 18;
+    const note: StickyNote = {
+      id: crypto.randomUUID(),
+      text: "",
+      position: {
+        x: (viewport.width / 2 - camera.x) / camera.zoom - size.width / 2 + cascade,
+        y: (viewport.height / 2 - camera.y) / camera.zoom - size.height / 2 + cascade
+      },
+      size
+    };
+    const stickyNotes = [...settings.stickyNotes, note];
+    setSettings((current) => ({ ...current, stickyNotes }));
+    void saveSettings({ stickyNotes });
+  }, [camera, saveSettings, settings.stickyNotes]);
+
+  const changeStickyNoteBounds = useCallback((id: string, bounds: SessionBounds): void => {
+    const stickyNotes = settings.stickyNotes.map((note) => note.id === id
+      ? { ...note, position: bounds.position, size: bounds.size }
+      : note);
+    setSettings((current) => ({ ...current, stickyNotes }));
+    void saveSettings({ stickyNotes });
+  }, [saveSettings, settings.stickyNotes]);
+
+  const changeStickyNoteText = useCallback((id: string, text: string): void => {
+    const stickyNotes = settings.stickyNotes.map((note) => note.id === id ? { ...note, text } : note);
+    setSettings((current) => ({ ...current, stickyNotes }));
+    void saveSettings({ stickyNotes });
+  }, [saveSettings, settings.stickyNotes]);
+
+  const disposeStickyNote = useCallback((id: string): void => {
+    const stickyNotes = settings.stickyNotes.filter((note) => note.id !== id);
+    setSettings((current) => ({ ...current, stickyNotes }));
+    void saveSettings({ stickyNotes });
+  }, [saveSettings, settings.stickyNotes]);
 
   const disposePluginCanvas = useCallback((id: string): void => {
     void saveSettings({ pluginCanvas: settings.pluginCanvas.filter((instance) => instance.id !== id) });
@@ -807,6 +847,10 @@ export function App(): React.JSX.Element {
           onPluginCanvasBoundsChange={changePluginCanvasBounds}
           onDisposePluginCanvas={disposePluginCanvas}
           onFocusPluginCanvas={focusPluginCanvas}
+          onCreateStickyNote={createStickyNote}
+          onStickyNoteBoundsChange={changeStickyNoteBounds}
+          onStickyNoteTextChange={changeStickyNoteText}
+          onDisposeStickyNote={disposeStickyNote}
           onFocusSession={focusSession}
           activeSessionId={activeSessionId}
           browserSelected={browserSelected}

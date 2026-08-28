@@ -50,6 +50,7 @@ const fallback = {
     { widgetId: "core.settings", column: 10, row: 6, columnSpan: 2, rowSpan: 2 }
   ],
   pluginCanvas: [],
+  stickyNotes: [],
   browserCanvas: null,
   browserAgentAccess: true,
   browserShowAgentPresence: true,
@@ -574,6 +575,60 @@ test("preserves plugin canvas bounds down to the manifest minimum floor", () => 
     }]
   }, fallback);
   assert.deepEqual(normalized.pluginCanvas[0]?.size, { width: 240, height: 140 });
+});
+
+test("normalizes persistent sticky notes and their canvas bounds", () => {
+  const normalized = normalizeSettings({
+    stickyNotes: [{
+      id: "note-1",
+      text: "Remember this",
+      position: { x: -120, y: 85 },
+      size: { width: 80, height: 2_000 }
+    }, {
+      id: "note-1",
+      text: "duplicate",
+      position: { x: 0, y: 0 },
+      size: { width: 300, height: 200 }
+    }, {
+      id: "bad note id",
+      text: "invalid",
+      position: { x: 0, y: 0 },
+      size: { width: 300, height: 200 }
+    }]
+  }, fallback);
+
+  assert.deepEqual(normalized.stickyNotes, [{
+    id: "note-1",
+    text: "Remember this",
+    position: { x: -120, y: 85 },
+    size: { width: 180, height: 800 }
+  }]);
+});
+
+test("sticky notes survive a SettingsStore reload", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "canvastty-sticky-notes-"));
+  try {
+    const store = new SettingsStore(dir, "en");
+    await store.load();
+    await store.update({
+      stickyNotes: [{
+        id: "note-persisted",
+        text: "Ship it",
+        position: { x: 420, y: -30 },
+        size: { width: 310, height: 240 }
+      }]
+    });
+
+    const reloaded = await new SettingsStore(dir, "en").load();
+    assert.deepEqual(reloaded.stickyNotes, [{
+      id: "note-persisted",
+      text: "Ship it",
+      position: { x: 420, y: -30 },
+      size: { width: 310, height: 240 }
+    }]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("normalizes resizable Home boundaries within generous safety limits", () => {

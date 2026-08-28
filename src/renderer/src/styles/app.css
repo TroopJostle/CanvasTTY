@@ -208,6 +208,14 @@ button { border: 0; }
 .terminal-card__resize-handle--se { right: 0; bottom: 0; width: 12px; height: 12px; cursor: nwse-resize; }
 .terminal-card__resize-handle--sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
 .terminal-card__resize-handle--nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.sticky-note-card { position: absolute; left: 0; top: 0; overflow: hidden; display: grid; grid-template-rows: 42px minmax(0, 1fr); border: 1px solid rgba(119,95,31,.18); border-radius: 8px 8px 13px 8px; color: #403719; background: #f5dc78; box-shadow: 0 12px 28px rgba(22,20,12,.28), inset 0 -8px 20px rgba(184,140,34,.08); }
+.sticky-note-card__header { min-width: 0; padding: 0 8px 0 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(119,95,31,.13); color: rgba(64,55,25,.68); background: rgba(255,247,190,.2); cursor: move; touch-action: none; }
+.sticky-note-card__header > span { overflow: hidden; font: 800 10px/1 var(--font-mono); letter-spacing: .06em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.sticky-note-card__header button { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px; color: rgba(64,55,25,.58); background: transparent; cursor: pointer; }
+.sticky-note-card__header button:hover { color: white; background: var(--danger); }
+.sticky-note-card__editor { width: 100%; height: 100%; min-width: 0; min-height: 0; resize: none; padding: 15px 17px 18px; overflow: auto; border: 0; outline: 0; color: #403719; background: transparent; font: 600 16px/1.5 system-ui, sans-serif; user-select: text; }
+.sticky-note-card__editor::placeholder { color: rgba(64,55,25,.44); }
+.sticky-note-card__editor:focus { box-shadow: inset 0 0 0 2px rgba(119,95,31,.2); }
 .plugin-canvas-card { position: absolute; left: 0; top: 0; width: 680px; height: 440px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 17px; background: var(--surface); box-shadow: var(--shadow-lg); }
 .plugin-canvas-card__header { height: 54px; padding: 0 11px 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: white; background: var(--surface-soft); cursor: move; touch-action: none; }
 .plugin-canvas-card__header > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }

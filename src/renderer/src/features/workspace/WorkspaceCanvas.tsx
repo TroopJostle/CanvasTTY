@@ -21,6 +21,7 @@ import { displayCanvasNavigationBinding } from "../../lib/shortcuts";
 import type { LimitsLoadState } from "../home/homeModel";
 import { homeGridPixelSize, homeLayoutFitsGrid } from "../home/homeLayout";
 import { BrowserCard } from "../browser/BrowserCard";
+import { StickyNoteCard } from "../notes/StickyNoteCard";
 import {
   browserCanvasWidgetId,
   canvasWidgetTarget,
@@ -67,6 +68,10 @@ interface WorkspaceCanvasProps {
   onPluginCanvasBoundsChange(id: string, bounds: SessionBounds): void;
   onDisposePluginCanvas(id: string): void;
   onFocusPluginCanvas(id: string): void;
+  onCreateStickyNote(): void;
+  onStickyNoteBoundsChange(id: string, bounds: SessionBounds): void;
+  onStickyNoteTextChange(id: string, text: string): void;
+  onDisposeStickyNote(id: string): void;
   onSessionBoundsChange(id: string, bounds: SessionBounds): void;
   onRestartSession(id: string): Promise<void>;
   onDisposeSession(id: string): void;
@@ -111,6 +116,10 @@ export function WorkspaceCanvas({
   onPluginCanvasBoundsChange,
   onDisposePluginCanvas,
   onFocusPluginCanvas,
+  onCreateStickyNote,
+  onStickyNoteBoundsChange,
+  onStickyNoteTextChange,
+  onDisposeStickyNote,
   onSessionBoundsChange,
   onRestartSession,
   onDisposeSession,
@@ -254,6 +263,7 @@ export function WorkspaceCanvas({
                   .filter((candidate) => candidate.id !== session.id)
                   .map((candidate) => ({ position: candidate.position, size: candidate.size })),
                 ...settings.pluginCanvas.map((candidate) => ({ position: candidate.position, size: candidate.size })),
+                ...settings.stickyNotes.map((candidate) => ({ position: candidate.position, size: candidate.size })),
                 ...(settings.browserCanvas ? [settings.browserCanvas] : [])
               ]}
               onActivate={(selectedSession) => {
@@ -290,6 +300,7 @@ export function WorkspaceCanvas({
                   ...settings.pluginCanvas
                     .filter((candidate) => candidate.id !== instance.id)
                     .map((candidate) => ({ position: candidate.position, size: candidate.size })),
+                  ...settings.stickyNotes.map((candidate) => ({ position: candidate.position, size: candidate.size })),
                   ...(settings.browserCanvas ? [settings.browserCanvas] : [])
                 ]}
                 onActivate={() => {
@@ -329,7 +340,8 @@ export function WorkspaceCanvas({
               snapTargets={[
                 homeBounds,
                 ...sessions.map((candidate) => ({ position: candidate.position, size: candidate.size })),
-                ...settings.pluginCanvas.map((candidate) => ({ position: candidate.position, size: candidate.size }))
+                ...settings.pluginCanvas.map((candidate) => ({ position: candidate.position, size: candidate.size })),
+                ...settings.stickyNotes.map((candidate) => ({ position: candidate.position, size: candidate.size }))
               ]}
               onBoundsChange={onBrowserBoundsChange}
               onActivate={() => {
@@ -343,6 +355,27 @@ export function WorkspaceCanvas({
               onError={onPluginError}
             />
           )}
+          {settings.stickyNotes.map((note) => (
+            <StickyNoteCard
+              key={note.id}
+              note={note}
+              locale={settings.locale}
+              zoom={camera.zoom}
+              snapEnabled={settings.snapToGrid}
+              snapTargets={[
+                homeBounds,
+                ...sessions.map((candidate) => ({ position: candidate.position, size: candidate.size })),
+                ...settings.pluginCanvas.map((candidate) => ({ position: candidate.position, size: candidate.size })),
+                ...settings.stickyNotes
+                  .filter((candidate) => candidate.id !== note.id)
+                  .map((candidate) => ({ position: candidate.position, size: candidate.size })),
+                ...(settings.browserCanvas ? [settings.browserCanvas] : [])
+              ]}
+              onBoundsChange={onStickyNoteBoundsChange}
+              onTextChange={onStickyNoteTextChange}
+              onDispose={onDisposeStickyNote}
+            />
+          ))}
         </div>
       </div>
 
@@ -362,6 +395,7 @@ export function WorkspaceCanvas({
 
       <div className="canvas-controls" data-interactive="true">
         <button type="button" onClick={onGoHome} title={t(settings.locale, "home")}><UiIcon name="home" size={17} /></button>
+        <button type="button" onClick={onCreateStickyNote} title={t(settings.locale, "newStickyNote")} aria-label={t(settings.locale, "newStickyNote")}><UiIcon name="plus" size={17} /></button>
         <button type="button" onClick={() => wheelNavigation.zoomBy(0.82)} title={t(settings.locale, "zoomOut")}><UiIcon name="zoom-out" size={17} /></button>
         <button type="button" onClick={() => wheelNavigation.zoomBy(1.22)} title={t(settings.locale, "zoomIn")}><UiIcon name="zoom-in" size={17} /></button>
       </div>
