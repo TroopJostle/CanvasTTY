@@ -10,6 +10,7 @@ import type {
   BrowserStateEvent,
   BrowserViewportBounds,
   CanvasNavigationOverrideStateEvent,
+  CanvasNavigationPointerBindingInput,
   CanvasTTYApi,
   CreateSessionRequest,
   PluginBrowserOpenRequest,
@@ -66,6 +67,9 @@ const api: CanvasTTYApi = {
       ipcRenderer.invoke(IPC.pluginsSetModules, pluginId, selectedModules)
     ),
     setEnabled: (pluginId: string, enabled: boolean) => ipcRenderer.invoke(IPC.pluginsSetEnabled, pluginId, enabled),
+    setHookEnabled: (pluginId: string, hookId: string, enabled: boolean) => (
+      ipcRenderer.invoke(IPC.pluginsSetHookEnabled, pluginId, hookId, enabled)
+    ),
     uninstall: (pluginId: string) => ipcRenderer.invoke(IPC.pluginsUninstall, pluginId),
     openCanvas: (pluginId: string, contributionId: string, sourceCanvasInstanceId?: string) => (
       ipcRenderer.invoke(IPC.pluginsOpenCanvas, pluginId, contributionId, sourceCanvasInstanceId)
@@ -140,6 +144,9 @@ const api: CanvasTTYApi = {
       ipcRenderer.sendSync(IPC.canvasNavigationOwnerWheel, { clientX, clientY });
     },
     setShortcutCaptureActive: (active: boolean) => ipcRenderer.send(IPC.canvasNavigationShortcutCapture, active),
+    setPointerBindingState: (input: CanvasNavigationPointerBindingInput) => (
+      ipcRenderer.send(IPC.canvasNavigationPointerBinding, input)
+    ),
     setPointerGestureActive: (active: boolean) => ipcRenderer.send(IPC.canvasNavigationPointerGesture, active),
     onOverrideState: (listener: (event: CanvasNavigationOverrideStateEvent) => void) => (
       subscribe(IPC.canvasNavigationOverrideState, listener)

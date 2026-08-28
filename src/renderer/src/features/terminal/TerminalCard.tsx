@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import {
+  INITIAL_TERMINAL_COLS,
+  INITIAL_TERMINAL_ROWS
+} from "../../../../shared/contracts";
 import type {
   LocaleId,
   PaletteId,
@@ -137,6 +141,8 @@ export function TerminalCard({
     if (!host) return;
 
     const terminal = new Terminal({
+      cols: INITIAL_TERMINAL_COLS,
+      rows: INITIAL_TERMINAL_ROWS,
       cursorBlink: true,
       cursorStyle: "block",
       fontFamily: '"JetBrains Mono", "Cascadia Code", monospace',
@@ -149,6 +155,29 @@ export function TerminalCard({
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(host);
+    let lastReportedGrid = "";
+    const reportGrid = (cols: number, rows: number): void => {
+      const grid = `${cols}x${rows}`;
+      if (grid === lastReportedGrid) return;
+      lastReportedGrid = grid;
+      window.canvasTTY.terminal.resize(session.id, cols, rows);
+    };
+    const resize = terminal.onResize(({ cols, rows }) => reportGrid(cols, rows));
+    let replayingSnapshot = true;
+    const queuedLiveOutput: string[] = [];
+    const unsubscribe = window.canvasTTY.terminal.onData((event) => {
+      if (event.id !== session.id) return;
+      if (replayingSnapshot) queuedLiveOutput.push(event.data);
+      else terminal.write(event.data);
+    });
+    const fit = (): void => {
+      try {
+        fitTerminalPreservingViewport(terminal, () => fitAddon.fit());
+        reportGrid(terminal.cols, terminal.rows);
+      } catch {
+        // A hidden semantic-zoom surface has no measurable rows yet.
+      }
+    };
     terminal.attachCustomKeyEventHandler((event) => {
       if (shouldRestartExitedTerminal(event, sessionExited.current)) {
         event.preventDefault();
@@ -197,15 +226,12 @@ export function TerminalCard({
       )
       : () => undefined;
     terminalRef.current = terminal;
+    fit();
     if (session.buffer) terminal.write(session.buffer);
+    replayingSnapshot = false;
+    for (const data of queuedLiveOutput) terminal.write(data);
+    queuedLiveOutput.length = 0;
 
-    const fit = (): void => {
-      try {
-        fitTerminalPreservingViewport(terminal, () => fitAddon.fit());
-      } catch {
-        // A hidden semantic-zoom surface has no measurable rows yet.
-      }
-    };
     const frame = requestAnimationFrame(fit);
     const resizeObserver = new ResizeObserver(fit);
     resizeObserver.observe(host);
@@ -215,11 +241,6 @@ export function TerminalCard({
       if (suppressFocusReport.current && (data === TERMINAL_FOCUS_IN || data === TERMINAL_FOCUS_OUT)) return;
       window.canvasTTY.terminal.input(session.id, data);
     });
-    const resize = terminal.onResize(({ cols, rows }) => window.canvasTTY.terminal.resize(session.id, cols, rows));
-    const unsubscribe = window.canvasTTY.terminal.onData((event) => {
-      if (event.id === session.id) terminal.write(event.data);
-    });
-
     return () => {
       cancelAnimationFrame(frame);
       detachMouseCoordinateAdapter();
@@ -376,7 +397,7 @@ export function TerminalCard({
 
   return (
     <article
-      className={`terminal-card ${summaryMode ? "terminal-card--summary" : ""} ${selected ? "terminal-card--selected" : ""}`}
+      className={`terminal-card terminal-card--${session.provider} ${summaryMode ? "terminal-card--summary" : ""} ${selected ? "terminal-card--selected" : ""}`}
       data-interactive="true"
       data-canvas-widget-id={terminalCanvasWidgetId(session.id)}
       data-canvas-widget-focusable="true"

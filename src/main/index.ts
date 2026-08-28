@@ -4,6 +4,7 @@ import { IPC, type PluginCanvasRequest } from "../shared/contracts";
 import { registerIpc } from "./ipc/registerIpc";
 import { SettingsStore } from "./services/SettingsStore";
 import { TerminalManager } from "./services/TerminalManager";
+import { TerminalSessionStore } from "./services/TerminalSessionStore";
 import { LimitsService } from "./services/LimitsService";
 import {
   createProviderCliRegistry,
@@ -118,7 +119,7 @@ async function createWindow(): Promise<BrowserWindow> {
     const currentUrl = window.webContents.getURL();
     if (currentUrl && url !== currentUrl) event.preventDefault();
   });
-  canvasNavigationInput?.attach(window.webContents);
+  canvasNavigationInput?.attach(window.webContents, { preventMouseBindings: false });
   window.on("blur", () => {
     canvasNavigationInput?.reset();
     browserService?.cancelCanvasNavigationGesture();
@@ -144,6 +145,8 @@ async function initializeServices(): Promise<void> {
   const userDataPath = app.getPath("userData");
   const settings = new SettingsStore(userDataPath, app.getLocale());
   await settings.load();
+  pluginManager = new PluginManager(userDataPath);
+  await pluginManager.load();
 
   canvasNavigationInput = new CanvasNavigationInputController(
     {
@@ -160,7 +163,9 @@ async function initializeServices(): Promise<void> {
       }
     }
   );
-  if (mainWindow && !mainWindow.isDestroyed()) canvasNavigationInput.attach(mainWindow.webContents);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    canvasNavigationInput.attach(mainWindow.webContents, { preventMouseBindings: false });
+  }
 
   browserService = new BrowserService(() => mainWindow, {
     userDataPath,
@@ -219,6 +224,9 @@ async function initializeServices(): Promise<void> {
     const openCodePluginPath = app.isPackaged
       ? join(process.resourcesPath, "agent-runtime", "opencode-plugin.mjs")
       : join(app.getAppPath(), "src", "agent-runtime", "opencode-plugin.mjs");
+    const pluginHookRunnerPath = app.isPackaged
+      ? join(process.resourcesPath, "agent-runtime", "plugin-hook-runner.mjs")
+      : join(app.getAppPath(), "src", "agent-runtime", "plugin-hook-runner.mjs");
     agentRuntimeHelper = {
       command: process.execPath,
       args: [runtimeHelperPath],
@@ -230,7 +238,17 @@ async function initializeServices(): Promise<void> {
       openCodePluginPath,
       hermesHomeDirectory,
       kimiHomeDirectory,
-      recoverOnStart: true
+      recoverOnStart: true,
+      coreHooksEnabled: settings.get().agentLifecycleHooksEnabled,
+      pluginHooks: {
+        runner: {
+          command: process.execPath,
+          args: [pluginHookRunnerPath],
+          env: { ELECTRON_RUN_AS_NODE: "1" }
+        },
+        registryPath: pluginManager.runtimeHookRegistryPath,
+        list: (provider) => pluginManager!.runtimeHooksForProvider(provider)
+      }
     });
   } else {
     console.warn(WINDOWS_AGENT_GATEWAY_UNAVAILABLE);
@@ -240,10 +258,11 @@ async function initializeServices(): Promise<void> {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(channel, payload);
     }
-  }, providerClis, agentBrowserBridge ?? undefined, agentRuntimeBridge ?? undefined);
+  }, providerClis, agentBrowserBridge ?? undefined, agentRuntimeBridge ?? undefined, settings.get().agentLifecycleHooksEnabled);
+  const terminalSessionStore = new TerminalSessionStore(userDataPath);
+  terminalManager.configureSessionPersistence(terminalSessionStore, settings.get().restoreTerminalSessions);
+  await terminalManager.restorePersistedSessions();
   limitsService = new LimitsService(providerClis, app.getVersion());
-  pluginManager = new PluginManager(app.getPath("userData"));
-  await pluginManager.load();
   githubAuth = new GithubAuthService(app.getPath("userData"), undefined, {
     fetcher: (input, init) => net.fetch(input, init)
   });
@@ -277,7 +296,9 @@ async function initializeServices(): Promise<void> {
     githubAuth: githubAuth!,
     hermesHud: hermesHudService,
     getMainWindow: () => mainWindow,
-    applyBrowserSettings: (next) => {
+    applyBrowserSettings: async (next) => {
+      agentRuntimeBridge?.setCoreHooksEnabled(next.agentLifecycleHooksEnabled);
+      terminalManager?.setLifecycleHooksEnabled(next.agentLifecycleHooksEnabled);
       agentBrowserBridge?.setEnabled(next.browserAgentAccess);
       browserService?.setRestoreTabs(next.browserRestoreTabs);
       browserService?.cancelCanvasNavigationGesture();
@@ -286,10 +307,14 @@ async function initializeServices(): Promise<void> {
         wheelBinding: activeCanvasWheelBinding(next.canvasWheelCaptureMode, next.canvasWheelOverride),
         navigationBinding: next.canvasNavigationOverride
       });
+      await terminalManager?.setSessionPersistenceEnabled(next.restoreTerminalSessions);
     },
     setCanvasNavigationShortcutCapture: (active) => {
       if (active) browserService?.cancelCanvasNavigationGesture();
       canvasNavigationInput?.setShortcutCaptureActive(active);
+    },
+    setCanvasNavigationPointerBinding: (input) => {
+      canvasNavigationInput?.updatePointerBinding(input);
     },
     openPluginWindow,
     closePluginWindows,
@@ -424,15 +449,7 @@ async function showStartupFailure(window: BrowserWindow, error: unknown): Promis
   }
 }
 
-function focusMainWindow(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-}
-
 if (hasSingleInstanceLock) {
-  app.on("second-instance", focusMainWindow);
   void app.whenReady()
     .then(startApplication)
     .catch((error) => {
@@ -465,7 +482,7 @@ app.on("window-all-closed", () => {
 void IPC.terminalData;
 
 async function shutdownServices(): Promise<void> {
-  terminalManager?.disposeAll();
+  if (terminalManager) await terminalManager.shutdown();
   limitsService?.dispose();
   if (agentGateway) await Promise.allSettled([agentGateway.close()]);
   if (runtimeGateway) await Promise.allSettled([runtimeGateway.close()]);
@@ -514,18 +531,12 @@ function closePluginWindows(pluginId: string): void {
 }
 
 function requestPluginLauncher(provider: import("../shared/contracts").ProviderId): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send(IPC.pluginsLauncherRequested, { provider });
 }
 
 function requestPluginCanvas(request: PluginCanvasRequest): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send(IPC.pluginsCanvasRequested, request);
 }
 

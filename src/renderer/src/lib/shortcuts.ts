@@ -1,5 +1,6 @@
 import {
   activeCanvasNavigationModifiers,
+  canvasNavigationMouseButtonFromDomButton,
   canvasNavigationModifierFromKey,
   normalizeCanvasNavigationInputKey
 } from "../../../shared/canvasNavigation.ts";
@@ -20,8 +21,21 @@ export function shortcutFromKeyboardEvent(event: ShortcutEvent): string | null {
   return [...activeCanvasNavigationModifiers(event), key].join("+");
 }
 
+export function shortcutFromPointerEvent(event: Omit<ShortcutEvent, "key"> & { button: number }): string | null {
+  const button = canvasNavigationMouseButtonFromDomButton(event.button);
+  if (!button) return null;
+  return [...activeCanvasNavigationModifiers(event), button].join("+");
+}
+
 export function matchesShortcut(event: ShortcutEvent, shortcut: string): boolean {
   return shortcutFromKeyboardEvent(event)?.toLowerCase() === shortcut.toLowerCase();
+}
+
+export function matchesPointerShortcut(
+  event: Omit<ShortcutEvent, "key"> & { button: number },
+  shortcut: string
+): boolean {
+  return shortcutFromPointerEvent(event)?.toLowerCase() === shortcut.toLowerCase();
 }
 
 export function isShortcutCaptureTarget(target: EventTarget | null): boolean {

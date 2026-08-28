@@ -5,7 +5,9 @@ import type {
   AgentProviderId,
   AppSettings,
   BrowserCanvasState,
+  CanvasRegion,
   CanvasColorId,
+  CanvasOverlayPlacement,
   CanvasWheelCaptureMode,
   CanvasPatternId,
   EdgePanSpeed,
@@ -19,6 +21,7 @@ import type {
   MediaFit,
   PaletteId,
   PluginCanvasInstance,
+  SessionRowColorMode,
   ShortcutBindings,
   ZoomSensitivity
 } from "../../shared/contracts";
@@ -41,10 +44,11 @@ import {
 const LOCALES = new Set<LocaleId>(["ru", "en"]);
 const PALETTES = new Set<PaletteId>(["sage", "lilac", "night"]);
 const HOME_ACCENT_PRESETS = new Set<HomeAccentPresetId>(["classic", "warm", "cool", "mono", "custom"]);
+const SESSION_ROW_COLOR_MODES = new Set<SessionRowColorMode>(["monochrome", "status"]);
 const CANVAS_COLORS = new Set<CanvasColorId>(["sage", "lilac", "night", "sand", "mist", "rose", "slate"]);
 const PATTERNS = new Set<CanvasPatternId>(["dots", "grid", "waves", "diagonal", "rings", "none"]);
 const MEDIA_FITS = new Set<MediaFit>(["cover", "contain"]);
-const SETTINGS_VERSION = 6;
+const SETTINGS_VERSION = 10;
 const GROK_LAUNCHER_SETTINGS_VERSION = 3;
 const EXPANDED_LIMIT_SETTINGS_VERSION = 5;
 const QWEN_SETTINGS_VERSION = 6;
@@ -59,6 +63,12 @@ const EDGE_PAN_SPEEDS = new Set<EdgePanSpeed>(["slow", "normal", "fast"]);
 const ZOOM_SENSITIVITIES = new Set<ZoomSensitivity>(["slow", "normal", "fast"]);
 const FOCUS_ACTIVATIONS = new Set<FocusActivation>(["off", "single", "double"]);
 const CANVAS_WHEEL_CAPTURE_MODES = new Set<CanvasWheelCaptureMode>(["off", "always", "key"]);
+const CANVAS_OVERLAY_PLACEMENTS = new Set<CanvasOverlayPlacement>([
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right"
+]);
 const SHORTCUT_MODIFIERS = new Set(["Ctrl", "Alt", "Shift", "Meta"]);
 const DEFAULT_SHORTCUTS: ShortcutBindings = { home: "Home", renameWindow: "F2" };
 
@@ -106,9 +116,16 @@ export class SettingsStore {
         || !("canvasWheelCaptureMode" in source)
         || !("homeAccentPreset" in source)
         || !("homeAccentColors" in source)
+        || !("sessionRowColorMode" in source)
         || !("homeLauncherProviders" in source)
         || !("homeLimitProviders" in source)
+        || !("agentLifecycleHooksEnabled" in source)
         || !("canvasColor" in source)
+        || !("minimapPlacement" in source)
+        || !("shortcutHintsPlacement" in source)
+        || !("canvasControlsPlacement" in source)
+        || !("restoreTerminalSessions" in source)
+        || !("canvasRegions" in source)
         || source.canvasColor === "palette"
         || source.settingsVersion !== SETTINGS_VERSION;
       let migratedCandidate: Record<string, unknown> = source;
@@ -193,11 +210,14 @@ function isPreQwenDefaultSelection<T extends string>(candidate: unknown[] | null
 function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform): AppSettings {
   return {
     locale: systemLocale.toLowerCase().startsWith("ru") ? "ru" : "en",
+    restoreTerminalSessions: false,
     palette: "sage",
     homeAccentPreset: "classic",
     homeAccentColors: { ...DEFAULT_HOME_ACCENT_COLORS },
+    sessionRowColorMode: "status",
     homeLauncherProviders: [...AGENT_PROVIDERS],
     homeLimitProviders: [...LIMIT_PROVIDERS],
+    agentLifecycleHooksEnabled: true,
     canvasColor: "sage",
     pattern: "dots",
     snapToGrid: true,
@@ -214,6 +234,9 @@ function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform
     hoverFocus: false,
     hoverFocusSpeed: "normal",
     showShortcutHints: true,
+    minimapPlacement: "top-right",
+    shortcutHintsPlacement: "bottom-right",
+    canvasControlsPlacement: "bottom-left",
     shortcuts: { ...DEFAULT_SHORTCUTS },
     mediaPath: null,
     mediaFit: "cover",
@@ -221,6 +244,7 @@ function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform
     acknowledgedDangerousProfiles: [],
     homeGridSize: { ...DEFAULT_HOME_GRID_SIZE },
     homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
+    canvasRegions: [],
     pluginCanvas: [],
     browserCanvas: null,
     browserAgentAccess: true,
@@ -268,6 +292,7 @@ export function normalizeSettings(
     homeGridSize
   );
   const pluginCanvas = normalizePluginCanvas(source.pluginCanvas, fallback.pluginCanvas ?? []);
+  const canvasRegions = normalizeCanvasRegions(source.canvasRegions, fallback.canvasRegions ?? []);
   const browserCanvas = normalizeBrowserCanvas(source.browserCanvas, fallback.browserCanvas ?? null);
   const homeAccentColors = normalizeHomeAccentColors(
     source.homeAccentColors,
@@ -291,13 +316,22 @@ export function normalizeSettings(
 
   return {
     locale: LOCALES.has(source.locale as LocaleId) ? source.locale as LocaleId : fallback.locale,
+    restoreTerminalSessions: typeof source.restoreTerminalSessions === "boolean"
+      ? source.restoreTerminalSessions
+      : fallback.restoreTerminalSessions ?? false,
     palette,
     homeAccentPreset: HOME_ACCENT_PRESETS.has(source.homeAccentPreset as HomeAccentPresetId)
       ? source.homeAccentPreset as HomeAccentPresetId
       : fallback.homeAccentPreset,
     homeAccentColors,
+    sessionRowColorMode: SESSION_ROW_COLOR_MODES.has(source.sessionRowColorMode as SessionRowColorMode)
+      ? source.sessionRowColorMode as SessionRowColorMode
+      : fallback.sessionRowColorMode ?? "status",
     homeLauncherProviders,
     homeLimitProviders,
+    agentLifecycleHooksEnabled: typeof source.agentLifecycleHooksEnabled === "boolean"
+      ? source.agentLifecycleHooksEnabled
+      : fallback.agentLifecycleHooksEnabled,
     canvasColor,
     pattern: PATTERNS.has(source.pattern as CanvasPatternId)
       ? source.pattern as CanvasPatternId
@@ -332,6 +366,15 @@ export function normalizeSettings(
     showShortcutHints: typeof source.showShortcutHints === "boolean"
       ? source.showShortcutHints
       : fallback.showShortcutHints,
+    minimapPlacement: normalizeCanvasOverlayPlacement(source.minimapPlacement, fallback.minimapPlacement),
+    shortcutHintsPlacement: normalizeCanvasOverlayPlacement(
+      source.shortcutHintsPlacement,
+      fallback.shortcutHintsPlacement
+    ),
+    canvasControlsPlacement: normalizeCanvasOverlayPlacement(
+      source.canvasControlsPlacement,
+      fallback.canvasControlsPlacement
+    ),
     shortcuts,
     mediaPath,
     mediaFit: MEDIA_FITS.has(source.mediaFit as MediaFit) ? source.mediaFit as MediaFit : fallback.mediaFit,
@@ -341,6 +384,7 @@ export function normalizeSettings(
     acknowledgedDangerousProfiles: [...new Set(acknowledged)],
     homeGridSize,
     homeLayout,
+    canvasRegions,
     pluginCanvas,
     browserCanvas,
     browserAgentAccess: typeof source.browserAgentAccess === "boolean"
@@ -353,6 +397,15 @@ export function normalizeSettings(
       ? source.browserRestoreTabs
       : fallback.browserRestoreTabs
   };
+}
+
+function normalizeCanvasOverlayPlacement(
+  candidate: unknown,
+  fallback: CanvasOverlayPlacement
+): CanvasOverlayPlacement {
+  return CANVAS_OVERLAY_PLACEMENTS.has(candidate as CanvasOverlayPlacement)
+    ? candidate as CanvasOverlayPlacement
+    : fallback;
 }
 
 function normalizeHomeAccentColors(candidate: unknown, fallback: HomeAccentColors): HomeAccentColors {
@@ -519,6 +572,36 @@ function normalizePluginCanvas(candidate: unknown, fallback: readonly PluginCanv
   return instances;
 }
 
+export function normalizeCanvasRegions(
+  candidate: unknown,
+  fallback: readonly CanvasRegion[] = []
+): CanvasRegion[] {
+  if (!Array.isArray(candidate)) return fallback.map((region) => structuredClone(region));
+
+  const regions: CanvasRegion[] = [];
+  const ids = new Set<string>();
+  for (const value of candidate.slice(0, 32)) {
+    if (!value || typeof value !== "object") continue;
+    const source = value as Partial<CanvasRegion>;
+    if (!isInstanceId(source.id) || ids.has(source.id)) continue;
+    if (typeof source.title !== "string" || source.title.trim().length === 0) continue;
+    if (!isFinitePoint(source.position) || !isFiniteSize(source.size)) continue;
+    if (typeof source.color !== "string" || !/^#[0-9A-F]{6}$/i.test(source.color)) continue;
+    regions.push({
+      id: source.id,
+      title: source.title.trim().slice(0, 80),
+      color: source.color.toUpperCase(),
+      position: { x: source.position.x, y: source.position.y },
+      size: {
+        width: clamp(source.size.width, 360, 4_000),
+        height: clamp(source.size.height, 240, 3_000)
+      }
+    });
+    ids.add(source.id);
+  }
+  return regions;
+}
+
 function normalizeBrowserCanvas(candidate: unknown, fallback: BrowserCanvasState | null): BrowserCanvasState | null {
   if (candidate === null) return null;
   if (!candidate || typeof candidate !== "object") return fallback ? structuredClone(fallback) : null;
@@ -558,6 +641,7 @@ function isValidShortcut(value: unknown): value is string {
   if (!key || parts.slice(0, -1).some((part) => !SHORTCUT_MODIFIERS.has(part))) return false;
   return /^[A-Z0-9]$/i.test(key)
     || /^F(?:[1-9]|1\d|2[0-4])$/.test(key)
+    || /^Mouse[345]$/.test(key)
     || new Set([
       "Home", "End", "PageUp", "PageDown", "Space", "Enter", "Escape", "Tab",
       "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Insert", "Backspace"

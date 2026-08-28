@@ -211,3 +211,35 @@ test("native Browser override drag stays canvas-owned after the chord is release
   assert.equal(browserCanvasNavigationPointerType({ type: "mouseLeave" }, false, true), null);
   assert.equal(browserCanvasNavigationPointerType({ type: "mouseDown", button: "left" }, false, false), null);
 });
+
+test("native Browser middle and bound side-button drags keep their initiating button", () => {
+  assert.equal(browserCanvasNavigationPointerType(
+    { type: "mouseDown", button: "middle" },
+    false,
+    false
+  ), "down");
+  assert.equal(browserCanvasNavigationPointerType(
+    { type: "mouseMove" },
+    false,
+    true,
+    { activeButton: "middle" }
+  ), "move");
+  assert.equal(browserCanvasNavigationPointerType(
+    { type: "mouseUp", button: "left" },
+    false,
+    true,
+    { activeButton: "middle" }
+  ), null);
+  assert.equal(browserCanvasNavigationPointerType(
+    { type: "mouseUp", button: "middle" },
+    false,
+    true,
+    { activeButton: "middle" }
+  ), "up");
+  assert.equal(browserCanvasNavigationPointerType(
+    { type: "mouseDown", button: "back" },
+    false,
+    false,
+    { mouseBindingActive: true }
+  ), "down");
+});

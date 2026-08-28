@@ -12,6 +12,7 @@ import {
 
 const fallback = {
   locale: "en",
+  restoreTerminalSessions: false,
   palette: "sage",
   homeAccentPreset: "classic",
   homeAccentColors: {
@@ -21,8 +22,10 @@ const fallback = {
     settings: "#D5A2C9",
     media: "#D5A2C9"
   },
+  sessionRowColorMode: "status",
   homeLauncherProviders: ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"],
   homeLimitProviders: ["codex", "claude", "qwen", "kimi", "opencode", "grok"],
+  agentLifecycleHooksEnabled: true,
   canvasColor: "sage",
   pattern: "dots",
   snapToGrid: true,
@@ -39,6 +42,9 @@ const fallback = {
   hoverFocus: false,
   hoverFocusSpeed: "normal",
   showShortcutHints: true,
+  minimapPlacement: "top-right",
+  shortcutHintsPlacement: "bottom-right",
+  canvasControlsPlacement: "bottom-left",
   shortcuts: { home: "Home", renameWindow: "F2" },
   mediaPath: null,
   mediaFit: "cover",
@@ -49,6 +55,7 @@ const fallback = {
     { widgetId: "core.clock", column: 0, row: 0, columnSpan: 10, rowSpan: 6 },
     { widgetId: "core.settings", column: 10, row: 6, columnSpan: 2, rowSpan: 2 }
   ],
+  canvasRegions: [],
   pluginCanvas: [],
   browserCanvas: null,
   browserAgentAccess: true,
@@ -95,6 +102,10 @@ test("falls back when edge pan and zoom values are garbage", () => {
   assert.equal(normalized.hoverFocus, fallback.hoverFocus);
   assert.equal(normalized.hoverFocusSpeed, fallback.hoverFocusSpeed);
   assert.equal(normalized.showShortcutHints, fallback.showShortcutHints);
+  assert.equal(normalized.sessionRowColorMode, fallback.sessionRowColorMode);
+  assert.equal(normalized.minimapPlacement, fallback.minimapPlacement);
+  assert.equal(normalized.shortcutHintsPlacement, fallback.shortcutHintsPlacement);
+  assert.equal(normalized.canvasControlsPlacement, fallback.canvasControlsPlacement);
   assert.deepEqual(normalized.shortcuts, fallback.shortcuts);
 });
 
@@ -104,6 +115,7 @@ test("older settings files without the new keys inherit defaults", () => {
   assert.equal(normalized.snapToGrid, false);
   assert.equal(normalized.homeAccentPreset, fallback.homeAccentPreset);
   assert.deepEqual(normalized.homeAccentColors, fallback.homeAccentColors);
+  assert.equal(normalized.sessionRowColorMode, fallback.sessionRowColorMode);
   assert.deepEqual(normalized.homeLauncherProviders, fallback.homeLauncherProviders);
   assert.deepEqual(normalized.homeLimitProviders, fallback.homeLimitProviders);
   assert.equal(normalized.canvasColor, fallback.canvasColor);
@@ -115,6 +127,35 @@ test("older settings files without the new keys inherit defaults", () => {
   assert.equal(normalized.invertCanvasWheel, fallback.invertCanvasWheel);
   assert.equal(normalized.hoverFocus, fallback.hoverFocus);
   assert.equal(normalized.hoverFocusSpeed, fallback.hoverFocusSpeed);
+  assert.equal(normalized.agentLifecycleHooksEnabled, true);
+});
+
+test("preserves an explicit lifecycle hook revocation", () => {
+  const normalized = normalizeSettings({ agentLifecycleHooksEnabled: false }, fallback);
+  assert.equal(normalized.agentLifecycleHooksEnabled, false);
+});
+
+test("terminal restore remains opt-in and canvas regions are bounded and normalized", () => {
+  const normalized = normalizeSettings({
+    restoreTerminalSessions: true,
+    canvasRegions: [{
+      id: "region-1",
+      title: "  Backend  ",
+      color: "#aabbcc",
+      position: { x: 20, y: 30 },
+      size: { width: 120, height: 9_000 }
+    }]
+  }, fallback);
+
+  assert.equal(normalized.restoreTerminalSessions, true);
+  assert.deepEqual(normalized.canvasRegions, [{
+    id: "region-1",
+    title: "Backend",
+    color: "#AABBCC",
+    position: { x: 20, y: 30 },
+    size: { width: 360, height: 3_000 }
+  }]);
+  assert.equal(normalizeSettings({ restoreTerminalSessions: "yes" }, fallback).restoreTerminalSessions, false);
 });
 
 test("normalizes HOME accents, Canvas colors, and the expanded pattern set", () => {
@@ -158,6 +199,12 @@ test("normalizes HOME accents, Canvas colors, and the expanded pattern set", () 
   assert.deepEqual(invalid.homeAccentColors, fallback.homeAccentColors);
   assert.equal(invalid.canvasColor, fallback.canvasColor);
   assert.equal(invalid.pattern, fallback.pattern);
+});
+
+test("normalizes the persisted session-row color mode", () => {
+  assert.equal(normalizeSettings({ sessionRowColorMode: "monochrome" }, fallback).sessionRowColorMode, "monochrome");
+  assert.equal(normalizeSettings({ sessionRowColorMode: "status" }, fallback).sessionRowColorMode, "status");
+  assert.equal(normalizeSettings({ sessionRowColorMode: "rainbow" }, fallback).sessionRowColorMode, "status");
 });
 
 test("migrates legacy palette-backed Canvas colors to an independent concrete background", () => {
@@ -257,7 +304,8 @@ test("the Qwen migration does not rerun the older expanded-limit migration", asy
     assert.deepEqual(loaded.homeLimitProviders, ["codex", "claude", "kimi"]);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 6);
+    assert.equal(persisted.settingsVersion, 10);
+    assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, ["codex", "claude", "kimi"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -279,7 +327,8 @@ test("the limit-display migration preserves a version-three launcher subset", as
     assert.deepEqual(loaded.homeLimitProviders, fallback.homeLimitProviders);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 6);
+    assert.equal(persisted.settingsVersion, 10);
+    assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, fallback.homeLimitProviders);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -298,7 +347,8 @@ test("the expanded limit migration preserves a curated version-four subset", asy
     assert.deepEqual(loaded.homeLimitProviders, ["kimi"]);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 6);
+    assert.equal(persisted.settingsVersion, 10);
+    assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, ["kimi"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -351,7 +401,11 @@ test("fresh installs default to scroll pan and key-gated widget wheel input", as
     assert.equal(store.get().hoverFocus, false);
     assert.equal(store.get().hoverFocusSpeed, "normal");
     assert.equal(store.get().showShortcutHints, true);
+    assert.equal(store.get().minimapPlacement, "top-right");
+    assert.equal(store.get().shortcutHintsPlacement, "bottom-right");
+    assert.equal(store.get().canvasControlsPlacement, "bottom-left");
     assert.equal(store.get().homeAccentPreset, "classic");
+    assert.equal(store.get().sessionRowColorMode, "status");
     assert.deepEqual(store.get().homeAccentColors, fallback.homeAccentColors);
     assert.deepEqual(store.get().homeLauncherProviders, fallback.homeLauncherProviders);
     assert.deepEqual(store.get().homeLimitProviders, fallback.homeLimitProviders);
@@ -593,6 +647,33 @@ test("valid custom shortcuts survive normalization", () => {
   assert.deepEqual(normalized.shortcuts, { home: "Ctrl+H", renameWindow: "Ctrl+Shift+R" });
 });
 
+test("mouse buttons survive action shortcut normalization", () => {
+  const normalized = normalizeSettings({
+    shortcuts: { home: "Mouse4", renameWindow: "Ctrl+Mouse5" }
+  }, fallback);
+  assert.deepEqual(normalized.shortcuts, { home: "Mouse4", renameWindow: "Ctrl+Mouse5" });
+});
+
+test("normalizes canvas overlay positions independently", () => {
+  const normalized = normalizeSettings({
+    minimapPlacement: "bottom-left",
+    shortcutHintsPlacement: "top-left",
+    canvasControlsPlacement: "top-right"
+  }, fallback);
+  assert.equal(normalized.minimapPlacement, "bottom-left");
+  assert.equal(normalized.shortcutHintsPlacement, "top-left");
+  assert.equal(normalized.canvasControlsPlacement, "top-right");
+
+  const invalid = normalizeSettings({
+    minimapPlacement: "center",
+    shortcutHintsPlacement: null,
+    canvasControlsPlacement: 42
+  }, fallback);
+  assert.equal(invalid.minimapPlacement, fallback.minimapPlacement);
+  assert.equal(invalid.shortcutHintsPlacement, fallback.shortcutHintsPlacement);
+  assert.equal(invalid.canvasControlsPlacement, fallback.canvasControlsPlacement);
+});
+
 test("conflicting or malformed shortcuts fall back together", () => {
   assert.deepEqual(
     normalizeSettings({ shortcuts: { home: "F2", renameWindow: "F2" } }, fallback).shortcuts,
@@ -637,6 +718,13 @@ test("both overrides accept zoom modifiers without swallowing ordinary shortcuts
     canvasWheelOverride: "Meta+Space"
   }, fallback, "darwin");
   assert.equal(conflictingChord.canvasWheelOverride, null);
+
+  const mouseBindings = normalizeSettings({
+    canvasWheelOverride: "Mouse4",
+    canvasNavigationOverride: "Shift+Mouse5"
+  }, fallback);
+  assert.equal(mouseBindings.canvasWheelOverride, "Mouse4");
+  assert.equal(mouseBindings.canvasNavigationOverride, "Shift+Mouse5");
 });
 
 test("a saved edge pan preference survives normalization", () => {

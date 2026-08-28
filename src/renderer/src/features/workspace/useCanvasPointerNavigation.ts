@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
 import type { AppSettings, CameraState, Point } from "../../../../shared/contracts";
+import {
+  canvasNavigationMouseButtonFromDomButton,
+  isCanvasNavigationBindingActive
+} from "../../../../shared/canvasNavigation";
 import { EDGE_PAN_SPEEDS, edgePanVelocity } from "./edgePan";
 
 interface PanState {
@@ -29,6 +33,7 @@ export interface CanvasPointerNavigationController {
   panning: boolean;
   handlePointerDownCapture(event: React.PointerEvent<HTMLDivElement>): boolean;
   handleClickCapture(event: React.MouseEvent<HTMLDivElement>): boolean;
+  handleAuxClickCapture(event: React.MouseEvent<HTMLDivElement>): boolean;
   handlePointerDown(event: React.PointerEvent<HTMLDivElement>): void;
   handlePointerMove(event: React.PointerEvent<HTMLDivElement>): void;
   handlePointerEnd(event: React.PointerEvent<HTMLDivElement>): void;
@@ -128,11 +133,56 @@ export function useCanvasPointerNavigation({
     setPanning(false);
   }), [cameraRef, commitCamera, finishPan, panTo]);
 
-  const startPan = useCallback((event: React.PointerEvent<HTMLDivElement>, override = false): void => {
-    const blocked = event.button !== 0
-      || (!override && (event.target as HTMLElement).closest('[data-interactive="true"]') !== null);
-    if (blocked) return;
-    if (override) {
+  const isMousePanBinding = useCallback((event: {
+    button: number;
+    altKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+  }): boolean => {
+    const button = canvasNavigationMouseButtonFromDomButton(event.button);
+    if (button === null) return false;
+    return isCanvasNavigationBindingActive({
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey,
+      pressedMouseButtons: new Set([button])
+    }, settingsRef.current.canvasNavigationOverride);
+  }, []);
+
+  const isMouseReservedBinding = useCallback((event: {
+    button: number;
+    altKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+  }): boolean => {
+    const button = canvasNavigationMouseButtonFromDomButton(event.button);
+    if (button === null) return false;
+    const state = {
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey,
+      pressedMouseButtons: new Set([button])
+    };
+    return isCanvasNavigationBindingActive(state, settingsRef.current.canvasNavigationOverride)
+      || (
+        settingsRef.current.canvasWheelCaptureMode === "key"
+        && isCanvasNavigationBindingActive(state, settingsRef.current.canvasWheelOverride)
+      );
+  }, []);
+
+  const startPan = useCallback((event: React.PointerEvent<HTMLDivElement>, override = false): boolean => {
+    const middleButton = event.button === 1;
+    const mouseBinding = isMousePanBinding(event);
+    const forced = override || middleButton || mouseBinding;
+    const supportedButton = event.button === 0 || middleButton || mouseBinding;
+    const blocked = !supportedButton
+      || (!forced && (event.target as HTMLElement).closest('[data-interactive="true"]') !== null);
+    if (blocked) return false;
+    if (forced) {
       event.preventDefault();
       event.stopPropagation();
     }
@@ -142,11 +192,12 @@ export function useCanvasPointerNavigation({
       startClient: { x: event.clientX, y: event.clientY },
       startCamera: cameraRef.current,
       moved: false,
-      suppressClick: override
+      suppressClick: forced
     };
     window.canvasTTY.canvasNavigation.setPointerGestureActive(true);
     setPanning(true);
-  }, [cameraRef]);
+    return true;
+  }, [cameraRef, isMousePanBinding]);
 
   const edgePanStep = useCallback((time: number): void => {
     edgeFrame.current = null;
@@ -171,10 +222,10 @@ export function useCanvasPointerNavigation({
   }, [cameraRef, commitCamera, viewport]);
 
   const handlePointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>): boolean => {
+    if (event.button === 1 || isMousePanBinding(event)) return startPan(event, true);
     if (!canvasOverrideActiveRef.current || !isCanvasWidgetTarget(event.target)) return false;
-    startPan(event, true);
-    return true;
-  }, [canvasOverrideActiveRef, startPan]);
+    return startPan(event, true);
+  }, [canvasOverrideActiveRef, isMousePanBinding, startPan]);
 
   const handleClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>): boolean => {
     if (!suppressClick.current) return false;
@@ -183,6 +234,13 @@ export function useCanvasPointerNavigation({
     event.stopPropagation();
     return true;
   }, []);
+
+  const handleAuxClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>): boolean => {
+    if (event.button !== 1 && !isMouseReservedBinding(event)) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }, [isMouseReservedBinding]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>): void => {
     const state = panState.current;
@@ -210,6 +268,7 @@ export function useCanvasPointerNavigation({
     panning,
     handlePointerDownCapture,
     handleClickCapture,
+    handleAuxClickCapture,
     handlePointerDown: startPan,
     handlePointerMove,
     handlePointerEnd,

@@ -2,19 +2,20 @@
 
 [English](plugins.md) · [Русский](plugins.ru.md) · [简体中文](plugins.zh-CN.md) · [Документация](README.ru.md)
 
-Runtime-плагин CanvasTTY — это статический web-пакет, установленный из HTTPS GitHub-репозитория. Один плагин может добавить виджет HOME, перемещаемое приложение на канвасе, отдельное окно приложения или сразу несколько таких элементов. HTML, CSS и JavaScript плагина работают в Electron sandbox без Node.js.
+Runtime-плагин CanvasTTY устанавливается из HTTPS GitHub-репозитория. Он может добавить sandboxed web-поверхности и опционально объявить scripts хуков агентов. Web-contributions работают без Node.js; каждый hook script остаётся выключенным, пока пользователь отдельно не включит его в **Настройки → Агенты → Хуки**.
 
 ## Модель доверия
 
 Установка плагина разрешает стороннему browser-коду выполняться локально. CanvasTTY уменьшает поверхность риска, но не может сделать неизвестный код доверенным:
 
-- CanvasTTY скачивает только tar-архив default branch по корневой ссылке GitHub-репозитория и никогда не запускает `npm install`, build hooks, нативные модули или scripts репозитория.
+- CanvasTTY скачивает только tar-архив default branch по корневой ссылке GitHub-репозитория и не запускает `npm install`, build hooks, нативные модули или scripts репозитория во время установки/обновления.
 - В пакете запрещены symlink; лимит — 500 файлов или каталогов / 25 МБ, один отдаваемый ресурс — не больше 8 МБ.
 - Iframe получает opaque sandbox origin, не видит parent DOM, `window.canvasTTY` и Node.js API.
 - Узкий preload отдельного окна не открывает Node primitives и передаёт те же SDK-запросы через IPC с проверкой plugin/contribution по фактическому URL.
 - Каждый привилегированный SDK-метод требует permission из manifest. Полный список разрешений показывается до подтверждения установки.
-- Учётные данные провайдеров, PTY buffer, рабочие каталоги, сырые ответы API и файловая система не пересекают plugin boundary.
+- Sandboxed web-contributions не получают учётные данные провайдеров, PTY buffer, рабочие каталоги, сырые ответы API или доступ к файловой системе.
 - Выключение или удаление плагина сразу прекращает отдачу его ресурсов и закрывает отдельные окна.
+- Agent hooks никогда не включаются автоматически. Включённый hook script эквивалентен нативному приложению: он получает payload события агента, выполняется с правами учётной записи пользователя и потенциально видит доступные ей конфиги или credentials. Обновление, смена modules или выключение плагина отзывает все такие разрешения.
 
 CanvasTTY не встраивает произвольные нативные окна ОС. Contribution `window` — это sandboxed `BrowserWindow`, которым владеет CanvasTTY. Native reparenting ненадёжен и непереносим между Wayland, macOS, Windows, разными DPI, popup и GPU surfaces.
 
@@ -31,9 +32,10 @@ apps/notes.html
 apps/notes.js
 windows/focus.html
 windows/focus.js
+hooks/audit.mjs
 ```
 
-Рабочий пример: [`examples/plugins/studio-kit`](../examples/plugins/studio-kit).
+Рабочий пример sandboxed web-поверхностей без привилегированного хука: [`examples/plugins/studio-kit`](../examples/plugins/studio-kit).
 Для IDE доступны [JSON Schema manifest](canvastty-plugin.schema.json) и [TypeScript declarations SDK](plugin-api.d.ts).
 
 ## Manifest v1
@@ -46,6 +48,16 @@ windows/focus.js
   "version": "1.0.0",
   "description": "Небольшие поверхности CanvasTTY на реальных данных host.",
   "permissions": ["storage", "secrets", "sessions:read", "launcher:open"],
+  "hooks": [
+    {
+      "id": "audit",
+      "title": "Локальный журнал аудита",
+      "description": "Записывает выбранные события жизненного цикла агента в журнал под управлением пользователя.",
+      "entry": "hooks/audit.mjs",
+      "providers": ["codex", "claude", "kimi"],
+      "events": ["session-start", "permission-request", "session-end"]
+    }
+  ],
   "settingsContribution": "notes",
   "contributions": [
     {
@@ -83,6 +95,16 @@ ID плагина и contribution — стабильные ключи persistenc
 Модульный manifest объявляет проверяемые по целостности coreFiles и до 16 необязательных modules. Для каждого файла задаются path, точный размер bytes и SHA-256. CanvasTTY загружает для предпросмотра только manifest, показывает галочки, размер и разрешения каждого модуля, а затем скачивает только ядро и выбранные модули. Последующее изменение выбора атомарно заменяет установленный пакет и удаляет файлы отключённых модулей. Поле module у contribution скрывает его, если соответствующий модуль не установлен.
 
 Целостность файлов модулей (точный размер в байтах и SHA-256) проверяется по хэшам, объявленным в manifest плагина, а сам manifest загружается с GitHub по TLS без отдельной подписи. Поэтому якорем доверия является GitHub-репозиторий плагина: скомпрометированный репозиторий может опубликовать новый manifest с совпадающими хэшами.
+
+### Опциональные хуки агентов
+
+Поле `hooks` объявляет до 16 JavaScript entries (`.js`, `.mjs`, `.cjs`). Для каждого задаются стабильные `id`, `title`, `entry`, список `providers` и семантические `events`: `session-start`, `prompt-submit`, `permission-request`, `permission-result`, `after-tool`, `stop`, `session-end`. Не поддерживаемые конкретным provider события пропускаются. В modular plugin entry хука должен быть integrity-объявлен в его опциональном `module`, а без module — в `coreFiles`. Non-modular пакет обязан содержать файл по проверенному entry path.
+
+Hook-only plugin использует пустой массив `contributions` и непустой `hooks`. Установка только копирует и проверяет файлы. Перед включением пользователь должен проверить исходник и репозиторий, затем отдельно подтвердить доверие в **Настройки → Агенты → Хуки**. Host-owned registry проверяется при каждом вызове, поэтому выключение блокирует последующие запуски даже в уже работающей сессии. Если launch-time bridge provider ещё не установлен, для включения понадобится новая или перезапущенная сессия агента.
+
+Собственная проверка хуков provider остаётся обязательной. Например, Codex может дополнительно попросить проверить launch-time bridge CanvasTTY через свой `/hooks`. CanvasTTY не передаёт глобальный флаг Codex `--dangerously-bypass-hook-trust`: включение plugin hook не ослабляет проверку других хуков provider.
+
+Script запускается отдельным процессом из каталога плагина и получает JSON через stdin с полями `apiVersion`, `pluginId`, `hookId`, `terminalSessionId`, `provider`, `event`, `providerEvent`, `payload`. Stdout/stderr отбрасываются, время выполнения ограничено, внутренние capability-токены CanvasTTY удаляются из environment. Это защита host internals, а не sandbox: script всё ещё может читать/менять файлы и запускать процессы с обычными правами пользователя.
 
 host.onStorageChange(listener) сообщает всем открытым поверхностям того же плагина — canvas cards, HOME widgets и отдельным окнам — об изменениях через host.storage.set, поэтому нескольким поверхностям не требуется постоянный polling.
 

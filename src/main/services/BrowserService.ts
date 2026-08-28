@@ -185,6 +185,9 @@ export class BrowserService {
       getFrozenTabId: () => this.canvasGestures.frozenTabId,
       isFreezeActive: () => this.canvasGestures.isFreezeActive,
       isNavigationOverrideActive: () => this.canvasNavigationInput?.active ?? false,
+      ownsNavigationMouseButton: (button) => (
+        this.canvasNavigationInput?.ownsNavigationMouseButton(button) ?? false
+      ),
       getCursorScreenPoint: () => screen.getCursorScreenPoint(),
       endWheelSequence: () => this.canvasGestures.endSequence(),
       sendNavigationPointer: (payload) => {
@@ -270,6 +273,8 @@ export class BrowserService {
 
   focus(): void {
     if (!this.visible || this.viewport.surface !== "native" || !this.activeTabId) return;
+    const owner = this.getOwner();
+    if (!owner || owner.isDestroyed() || !owner.isFocused()) return;
     const active = this.tabs.get(this.activeTabId);
     if (!active || active.view.webContents.isDestroyed()) return;
     active.view.webContents.focus();
@@ -517,7 +522,16 @@ export class BrowserService {
     await this.persistRuntime();
     this.syncViews();
     this.canvasGestures.refreshFrame();
-    if (this.viewport.surface === "native" && !tab.view.webContents.isDestroyed()) tab.view.webContents.focus();
+    const owner = this.getOwner();
+    if (
+      this.viewport.surface === "native"
+      && owner
+      && !owner.isDestroyed()
+      && owner.isFocused()
+      && !tab.view.webContents.isDestroyed()
+    ) {
+      tab.view.webContents.focus();
+    }
     this.emit();
     return this.getState();
   }
@@ -680,6 +694,10 @@ export class BrowserService {
       if (!owner || owner.isDestroyed()) return;
       this.canvasGestures.observeBrowserWheel(tab.id, mouse);
       if (this.canvasPointers.handleBrowserMouse(tab, owner, event, mouse)) return;
+      if (this.canvasNavigationInput?.ownsAnyMouseButton(mouse.button as string | undefined)) {
+        event.preventDefault();
+        return;
+      }
 
       const pointerType = mouse.type === "mouseDown" && mouse.button === "left"
         ? "down"

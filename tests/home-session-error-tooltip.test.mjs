@@ -29,9 +29,14 @@ test("Home opens failure details from hover or keyboard focus in a top-layer pop
 });
 
 test("failure popover preserves the three-row scroll viewport and danger rail", async () => {
-  const styles = await readFile(appStylesPath, "utf8");
+  const [source, styles] = await Promise.all([
+    readFile(homeZonePath, "utf8"),
+    readFile(appStylesPath, "utf8")
+  ]);
 
   assert.match(styles, /\.usage-list \{[^}]*overflow-y: auto;/);
+  assert.match(styles, /\.usage-list \{[^}]*overscroll-behavior: contain;/);
+  assert.match(source, /className="tile usage-list"[\s\S]*?data-canvas-wheel-priority="local"/);
   assert.doesNotMatch(styles, /\.usage-list:has\([^}]+overflow: visible;/);
   assert.match(styles, /\.usage-row-wrap:has\(\.ui-icon--error\) \.usage-row::before \{ background: var\(--danger\); \}/);
 });

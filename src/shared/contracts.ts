@@ -5,6 +5,7 @@ export type LaunchProfileId = "normal" | "yolo";
 export type SessionStatus = "idle" | "working" | "needs_approval" | "unavailable" | "done" | "failed";
 export type PaletteId = "sage" | "lilac" | "night";
 export type HomeAccentPresetId = "classic" | "warm" | "cool" | "mono" | "custom";
+export type SessionRowColorMode = "monochrome" | "status";
 export type CanvasColorId = "sage" | "lilac" | "night" | "sand" | "mist" | "rose" | "slate";
 export type CanvasPatternId = "dots" | "grid" | "waves" | "diagonal" | "rings" | "none";
 export type LocaleId = "ru" | "en";
@@ -12,6 +13,8 @@ export type MediaFit = "cover" | "contain";
 export type EdgePanSpeed = "slow" | "normal" | "fast";
 export type ZoomSensitivity = "slow" | "normal" | "fast";
 export type CanvasWheelCaptureMode = "off" | "always" | "key";
+export type CanvasNavigationMouseButton = "Mouse3" | "Mouse4" | "Mouse5";
+export type CanvasOverlayPlacement = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type BrowserViewportSurface = "native" | "placeholder" | "hidden";
 export type FocusActivation = "off" | "single" | "double";
 export type ShortcutAction = "home" | "renameWindow";
@@ -85,6 +88,9 @@ export const DEFAULT_SHORTCUTS: ShortcutBindings = {
   renameWindow: "F2"
 };
 
+export const INITIAL_TERMINAL_COLS = 80;
+export const INITIAL_TERMINAL_ROWS = 24;
+
 export interface Point {
   x: number;
   y: number;
@@ -106,11 +112,14 @@ export interface CameraState extends Point {
 
 export interface AppSettings {
   locale: LocaleId;
+  restoreTerminalSessions: boolean;
   palette: PaletteId;
   homeAccentPreset: HomeAccentPresetId;
   homeAccentColors: HomeAccentColors;
+  sessionRowColorMode: SessionRowColorMode;
   homeLauncherProviders: AgentProviderId[];
   homeLimitProviders: LimitProviderId[];
+  agentLifecycleHooksEnabled: boolean;
   canvasColor: CanvasColorId;
   pattern: CanvasPatternId;
   snapToGrid: boolean;
@@ -127,6 +136,9 @@ export interface AppSettings {
   hoverFocus: boolean;
   hoverFocusSpeed: EdgePanSpeed;
   showShortcutHints: boolean;
+  minimapPlacement: CanvasOverlayPlacement;
+  shortcutHintsPlacement: CanvasOverlayPlacement;
+  canvasControlsPlacement: CanvasOverlayPlacement;
   shortcuts: ShortcutBindings;
   mediaPath: string | null;
   mediaFit: MediaFit;
@@ -134,6 +146,7 @@ export interface AppSettings {
   acknowledgedDangerousProfiles: AgentProviderId[];
   homeGridSize: HomeGridSize;
   homeLayout: HomeWidgetPlacement[];
+  canvasRegions: CanvasRegion[];
   pluginCanvas: PluginCanvasInstance[];
   browserCanvas: BrowserCanvasState | null;
   browserAgentAccess: boolean;
@@ -243,6 +256,26 @@ export interface PluginModule {
   files: PluginModuleAsset[];
 }
 
+export type PluginAgentHookEvent =
+  | "session-start"
+  | "prompt-submit"
+  | "permission-request"
+  | "permission-result"
+  | "after-tool"
+  | "stop"
+  | "session-end";
+
+export interface PluginAgentHook {
+  id: string;
+  title: string;
+  description?: string;
+  /** JavaScript entry executed with the current user's OS privileges after explicit opt-in. */
+  entry: string;
+  providers: AgentProviderId[];
+  events: PluginAgentHookEvent[];
+  module?: string;
+}
+
 export interface PluginHomeWidgetContribution extends PluginContributionBase {
   kind: "home-widget";
   defaultSize: PluginGridSize;
@@ -287,6 +320,7 @@ export interface PluginManifest {
   minHostVersion?: string;
   permissions: PluginPermission[];
   contributions: PluginContribution[];
+  hooks?: PluginAgentHook[];
   settingsContribution?: string;
   coreFiles?: PluginModuleAsset[];
   modules?: PluginModule[];
@@ -328,6 +362,8 @@ export interface InstalledPlugin {
   enabled: boolean;
   installedAt: number;
   selectedModules: string[];
+  /** Hook ids explicitly trusted by the user. Never populated during install or update. */
+  enabledHooks: string[];
 }
 
 export interface PluginInstallPreview {
@@ -344,6 +380,12 @@ export interface PluginCanvasInstance {
   title: string;
   position: Point;
   size: Size;
+}
+
+export interface CanvasRegion extends SessionBounds {
+  id: string;
+  title: string;
+  color: string;
 }
 
 export interface PluginSessionInfo {
@@ -531,6 +573,15 @@ export interface BrowserCanvasNavigationPointerEvent {
 export interface CanvasNavigationOverrideStateEvent {
   wheelActive: boolean;
   navigationActive: boolean;
+}
+
+export interface CanvasNavigationPointerBindingInput {
+  button: CanvasNavigationMouseButton;
+  pressed: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
 }
 
 export interface BrowserCanvasPointerEvent {
@@ -791,6 +842,7 @@ export interface CanvasTTYApi {
     install(token: string, selectedModules?: string[]): Promise<InstalledPlugin>;
     setModules(pluginId: string, selectedModules: string[]): Promise<InstalledPlugin>;
     setEnabled(pluginId: string, enabled: boolean): Promise<InstalledPlugin>;
+    setHookEnabled(pluginId: string, hookId: string, enabled: boolean): Promise<InstalledPlugin>;
     uninstall(pluginId: string): Promise<void>;
     openCanvas(pluginId: string, contributionId: string, sourceCanvasInstanceId?: string): Promise<void>;
     openWindow(pluginId: string, contributionId: string): Promise<void>;
@@ -845,6 +897,7 @@ export interface CanvasTTYApi {
   canvasNavigation: {
     armOwnerWheelSequence(clientX: number, clientY: number): void;
     setShortcutCaptureActive(active: boolean): void;
+    setPointerBindingState(input: CanvasNavigationPointerBindingInput): void;
     setPointerGestureActive(active: boolean): void;
     onOverrideState(listener: (event: CanvasNavigationOverrideStateEvent) => void): () => void;
   };
@@ -898,6 +951,7 @@ export const IPC = {
   pluginsInstall: "plugins:install",
   pluginsSetModules: "plugins:set-modules",
   pluginsSetEnabled: "plugins:set-enabled",
+  pluginsSetHookEnabled: "plugins:set-hook-enabled",
   pluginsUninstall: "plugins:uninstall",
   pluginsOpenCanvas: "plugins:open-canvas",
   pluginsOpenWindow: "plugins:open-window",
@@ -950,6 +1004,7 @@ export const IPC = {
   browserCanvasPointer: "browser:canvas-pointer",
   browserCanvasNavigationPointer: "browser:canvas-navigation-pointer",
   canvasNavigationShortcutCapture: "canvas-navigation:shortcut-capture",
+  canvasNavigationPointerBinding: "canvas-navigation:pointer-binding",
   canvasNavigationOwnerWheel: "canvas-navigation:owner-wheel",
   canvasNavigationPointerGesture: "canvas-navigation:pointer-gesture",
   canvasNavigationOverrideState: "canvas-navigation:override-state",

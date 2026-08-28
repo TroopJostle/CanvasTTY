@@ -2,6 +2,17 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.3.0
+
+- Added opt-in terminal-window restoration. CanvasTTY persists only window identity, provider/profile, title, project folder, position, and size; agents resume through their native project-scoped continue mode, while PTY scrollback and capabilities remain ephemeral.
+- Added named pastel Canvas regions from the empty-canvas context menu, plus an RTS-style camera-centred minimap. HOME and fixed-size window markers now move through a uniform projection without auto-fit distortion, and a HOME edge marker appears only after HOME has fully left the radar.
+- Expanded Canvas navigation bindings to Mouse3/Mouse4/Mouse5, kept middle-button drag as the direct pan fallback, and corrected wheel ownership so terminal session lists and focused input surfaces scroll locally while explicit Canvas capture remains predictable.
+- Fixed Grok Build's cropped initial TUI by waiting for the renderer-measured xterm grid on launch, restart, and restore. Terminal resize and palette changes preserve the active scrollback viewport.
+- Added configurable whole-row agent status colors in Appearance: gray for idle/unavailable/finished states, sage green for working, and yellow for input-needed, with a monochrome alternative.
+- Fixed Claude usage limits to read the current runtime user's OAuth credentials and perform the provider request when a token exists. Missing local credentials now mean sign-in is required instead of being misreported as a missing subscription.
+- Prevented CanvasTTY from restoring, showing, or focusing its window because of a rejected second launch or background plugin/browser activity, avoiding unsolicited virtual-desktop switches.
+- Added a concise Agents hook switch, expandable About FAQ, and explicit per-hook trust for optional plugin agent hooks. Plugin hooks remain disabled after install/update and run in an isolated process with CanvasTTY internal capabilities stripped.
+
 ## 1.2.8
 
 - Added Qwen Code as a first-class launcher across HOME, Settings, CLI discovery, Normal/YOLO profiles, the plugin SDK, and the scoped built-in-browser MCP bridge, using the official Qwen mark and launch-only configuration.

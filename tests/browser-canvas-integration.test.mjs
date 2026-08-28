@@ -55,6 +55,18 @@ test("native Browser layout remains a BrowserService responsibility", async () =
   assert.match(styles, /\.browser-card__viewport \{[^}]*inset: 140px 8px 8px;[^}]*background: #272934;/);
 });
 
+test("background browser activation cannot focus an inactive CanvasTTY window", async () => {
+  const source = await readFile(browserServicePath, "utf8");
+  const focusStart = source.indexOf("focus(): void");
+  const activateStart = source.indexOf("private async hostActivateTab");
+  const focusRoute = source.slice(focusStart, source.indexOf("setInputFocused", focusStart));
+  const activateRoute = source.slice(activateStart, source.indexOf("private async hostCloseTab", activateStart));
+
+  assert.match(focusRoute, /owner\.isFocused\(\)/);
+  assert.match(activateRoute, /owner\.isFocused\(\)/);
+  assert.match(activateRoute, /tab\.view\.webContents\.focus\(\)/);
+});
+
 test("browser tab chrome highlights only the active tab", async () => {
   const [card, styles] = await Promise.all([
     readFile(browserCardPath, "utf8"),

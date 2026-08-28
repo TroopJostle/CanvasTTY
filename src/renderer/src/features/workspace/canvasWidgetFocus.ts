@@ -45,3 +45,8 @@ export function isFocusedCanvasWidgetTarget(
   if (focusedWidgetId === null) return false;
   return canvasWidgetTarget(target).focusableWidgetId === focusedWidgetId;
 }
+
+export function isPriorityLocalCanvasWheelTarget(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && target.closest('[data-canvas-wheel-priority="local"]') !== null;
+}

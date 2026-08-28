@@ -4,12 +4,15 @@ import { PluginBrowserOpenBroker } from "../src/main/ipc/PluginBrowserOpenBroker
 
 function fakeMainWindow() {
   const messages = [];
+  const activations = [];
   return {
     messages,
+    activations,
     isDestroyed: () => false,
     isMinimized: () => false,
-    show: () => undefined,
-    focus: () => undefined,
+    restore: () => activations.push("restore"),
+    show: () => activations.push("show"),
+    focus: () => activations.push("focus"),
     webContents: {
       isDestroyed: () => false,
       send: (channel, payload) => messages.push({ channel, payload })
@@ -24,6 +27,7 @@ test("plugin browser broker correlates concurrent renderer acknowledgements", as
   const first = broker.request("demo.plugin", "https://one.example/");
   const second = broker.request("demo.plugin", "https://two.example/");
   assert.equal(window.messages.length, 2);
+  assert.deepEqual(window.activations, []);
   assert.notEqual(window.messages[0].payload.requestId, window.messages[1].payload.requestId);
 
   assert.equal(broker.complete({ requestId: window.messages[1].payload.requestId, ok: true }), true);

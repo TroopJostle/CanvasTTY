@@ -6,6 +6,7 @@ import type {
   BrowserDownloadSnapshot,
   BrowserSnapshot,
   CanvasColorId,
+  CanvasOverlayPlacement,
   CanvasPatternId,
   CanvasWheelCaptureMode,
   EdgePanSpeed,
@@ -21,6 +22,7 @@ import type {
   PluginManifest,
   PluginInstallPreview,
   PluginUpdateStatus,
+  SessionRowColorMode,
   ShortcutAction,
   ZoomSensitivity
 } from "../../../../shared/contracts";
@@ -40,7 +42,7 @@ import {
   setHomeLimitProviderEnabled,
   setHomeLauncherProviderEnabled
 } from "../../lib/providers";
-import { shortcutFromKeyboardEvent } from "../../lib/shortcuts";
+import { shortcutFromKeyboardEvent, shortcutFromPointerEvent } from "../../lib/shortcuts";
 import { t } from "../../lib/i18n";
 import { PluginSettingsSection } from "../plugins/PluginSettingsSection";
 import { HomeAppearanceSettings } from "../home/HomeAppearanceSettings";
@@ -50,8 +52,10 @@ import {
   resolveAppearanceSettings
 } from "./appearanceSettings";
 import { CanvasNavigationShortcutEditor } from "./CanvasNavigationShortcutEditor";
+import { AgentHooksSettings } from "./AgentHooksSettings";
+import { AboutSettings } from "./AboutSettings";
 
-type SettingsSection = "general" | "appearance" | "agents" | "controls" | "browser" | "plugins";
+type SettingsSection = "general" | "appearance" | "agents" | "controls" | "browser" | "plugins" | "about";
 
 const CLASSIC_HOME_PREVIEW = ["#B8CF99", "#D8E1C5", "#9CC7DC", "#D5A2C9"];
 
@@ -82,6 +86,7 @@ interface SettingsPanelProps {
   onUpdatePlugin(pluginId: string): Promise<void>;
   onSetPluginModules(pluginId: string, selectedModules: string[]): Promise<void>;
   onSetPluginEnabled(pluginId: string, enabled: boolean): Promise<void>;
+  onSetPluginHookEnabled(pluginId: string, hookId: string, enabled: boolean): Promise<void>;
   onUninstallPlugin(pluginId: string): Promise<void>;
   onOpenPluginContribution(plugin: InstalledPlugin, contribution: PluginContribution): Promise<void>;
   onToggleHomeWidget(widgetId: string, size: PluginGridSize): Promise<void>;
@@ -106,6 +111,7 @@ export function SettingsPanel({
   onUpdatePlugin,
   onSetPluginModules,
   onSetPluginEnabled,
+  onSetPluginHookEnabled,
   onUninstallPlugin,
   onOpenPluginContribution,
   onToggleHomeWidget,
@@ -182,20 +188,7 @@ export function SettingsPanel({
     }
   };
 
-  const captureShortcut = async (
-    action: ShortcutAction,
-    event: React.KeyboardEvent<HTMLButtonElement>
-  ): Promise<void> => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.key === "Escape") {
-      setCapturing(null);
-      setShortcutError(null);
-      return;
-    }
-
-    const shortcut = shortcutFromKeyboardEvent(event);
-    if (!shortcut) return;
+  const saveShortcut = async (action: ShortcutAction, shortcut: string): Promise<void> => {
     const conflict = Object.entries(settings.shortcuts).find(
       ([candidateAction, value]) => candidateAction !== action && value.toLowerCase() === shortcut.toLowerCase()
     );
@@ -212,6 +205,34 @@ export function SettingsPanel({
     setShortcutError(null);
     await onChange({ shortcuts: { ...settings.shortcuts, [action]: shortcut } });
     setCapturing(null);
+  };
+
+  const captureShortcut = (
+    action: ShortcutAction,
+    event: React.KeyboardEvent<HTMLButtonElement>
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      setCapturing(null);
+      setShortcutError(null);
+      return;
+    }
+
+    const shortcut = shortcutFromKeyboardEvent(event);
+    if (!shortcut) return;
+    void saveShortcut(action, shortcut);
+  };
+
+  const capturePointerShortcut = (
+    action: ShortcutAction,
+    event: React.PointerEvent<HTMLButtonElement>
+  ): void => {
+    const shortcut = shortcutFromPointerEvent(event);
+    if (!shortcut) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void saveShortcut(action, shortcut);
   };
 
   const changeCanvasWheelCaptureMode = (mode: CanvasWheelCaptureMode): void => {
@@ -242,7 +263,7 @@ export function SettingsPanel({
           </header>
 
           <nav className="settings-tabs" role="tablist" aria-label={t(locale, "settingsSections")}>
-            {(["general", "appearance", "agents", "controls", "browser", "plugins"] as SettingsSection[]).map((value) => (
+            {(["general", "appearance", "agents", "controls", "browser", "plugins", "about"] as SettingsSection[]).map((value) => (
               <button
                 key={value}
                 className={section === value ? "settings-tabs__button settings-tabs__button--active" : "settings-tabs__button"}
@@ -257,13 +278,25 @@ export function SettingsPanel({
 
         <div className="settings-panel__content" role="tabpanel">
           {section === "general" && (
-            <SettingGroup label={t(locale, "language")}>
-              <Segmented
-                value={settings.locale}
-                options={[["ru", "Русский"], ["en", "English"]]}
-                onChange={(value) => void onChange({ locale: value as LocaleId })}
-              />
-            </SettingGroup>
+            <>
+              <SettingGroup label={t(locale, "language")}>
+                <Segmented
+                  value={settings.locale}
+                  options={[["ru", "Русский"], ["en", "English"]]}
+                  onChange={(value) => void onChange({ locale: value as LocaleId })}
+                />
+              </SettingGroup>
+              <SettingGroup
+                label={t(locale, "terminalSessionRestore")}
+                description={t(locale, "terminalSessionRestoreDescription")}
+              >
+                <Segmented
+                  value={settings.restoreTerminalSessions ? "save" : "discard"}
+                  options={[["discard", t(locale, "doNotSave")], ["save", t(locale, "saveAndContinue")]]}
+                  onChange={(value) => void onChange({ restoreTerminalSessions: value === "save" })}
+                />
+              </SettingGroup>
+            </>
           )}
 
           {section === "appearance" && (
@@ -303,6 +336,19 @@ export function SettingsPanel({
                   </div>
                 </SettingGroup>
               )}
+              <SettingGroup
+                label={t(locale, "sessionRowColors")}
+                description={t(locale, "sessionRowColorsDescription")}
+              >
+                <Segmented
+                  value={settings.sessionRowColorMode}
+                  options={([
+                    ["status", t(locale, "sessionRowColorsByStatus")],
+                    ["monochrome", t(locale, "sessionRowColorsMonochrome")]
+                  ] as [SessionRowColorMode, string][])}
+                  onChange={(value) => void onChange({ sessionRowColorMode: value as SessionRowColorMode })}
+                />
+              </SettingGroup>
               <SettingGroup label={t(locale, "canvasColor")}>
                 <SwatchChoices
                   value={appearance.canvasColor}
@@ -336,6 +382,29 @@ export function SettingsPanel({
                   onChange={(value) => void onChange({ showShortcutHints: value === "on" })}
                 />
               </SettingGroup>
+              <SettingGroup label={t(locale, "minimapPlacement")}>
+                <PlacementChoices
+                  value={settings.minimapPlacement}
+                  locale={locale}
+                  onChange={(minimapPlacement) => void onChange({ minimapPlacement })}
+                />
+              </SettingGroup>
+              {settings.showShortcutHints && (
+                <SettingGroup label={t(locale, "shortcutHintsPlacement")}>
+                  <PlacementChoices
+                    value={settings.shortcutHintsPlacement}
+                    locale={locale}
+                    onChange={(shortcutHintsPlacement) => void onChange({ shortcutHintsPlacement })}
+                  />
+                </SettingGroup>
+              )}
+              <SettingGroup label={t(locale, "canvasControlsPlacement")}>
+                <PlacementChoices
+                  value={settings.canvasControlsPlacement}
+                  locale={locale}
+                  onChange={(canvasControlsPlacement) => void onChange({ canvasControlsPlacement })}
+                />
+              </SettingGroup>
               <HomeAppearanceSettings
                 settings={settings}
                 plugins={plugins}
@@ -347,6 +416,12 @@ export function SettingsPanel({
 
           {section === "agents" && (
             <>
+              <AgentHooksSettings
+                settings={settings}
+                plugins={plugins}
+                onChange={onChange}
+                onSetPluginHookEnabled={onSetPluginHookEnabled}
+              />
               <SettingGroup
                 label={t(locale, "homeLauncherAgents")}
                 description={t(locale, "homeLauncherAgentsDescription")}
@@ -531,30 +606,37 @@ export function SettingsPanel({
                   onChange={(value) => void onChange({ invertCanvasWheel: value === "inverted" })}
                 />
               </SettingGroup>
-              <SettingGroup label={t(locale, "keyboardShortcuts")}>
-                <div className="shortcut-editor">
-                  <ShortcutRow
-                    label={t(locale, "homeShortcut")}
-                    value={settings.shortcuts.home}
-                    capturing={capturing === "home"}
-                    onStart={() => {
-                      setShortcutError(null);
-                      setCapturing("home");
-                    }}
-                    onKeyDown={(event) => void captureShortcut("home", event)}
-                  />
-                  <ShortcutRow
-                    label={t(locale, "renameWindow")}
-                    value={settings.shortcuts.renameWindow}
-                    capturing={capturing === "renameWindow"}
-                    onStart={() => {
-                      setShortcutError(null);
-                      setCapturing("renameWindow");
-                    }}
-                    onKeyDown={(event) => void captureShortcut("renameWindow", event)}
-                  />
-                </div>
-                {shortcutError && <p className="shortcut-editor__error" role="alert">{shortcutError}</p>}
+              <SettingGroup label={t(locale, "homeShortcut")} description={t(locale, "homeShortcutDescription")}>
+                <ShortcutRow
+                  label={t(locale, "shortcutBinding")}
+                  value={settings.shortcuts.home}
+                  capturing={capturing === "home"}
+                  onStart={() => {
+                    setShortcutError(null);
+                    setCapturing("home");
+                  }}
+                  onKeyDown={(event) => captureShortcut("home", event)}
+                  onPointerDown={(event) => capturePointerShortcut("home", event)}
+                />
+                {shortcutError && capturing === "home" && (
+                  <p className="shortcut-editor__error" role="alert">{shortcutError}</p>
+                )}
+              </SettingGroup>
+              <SettingGroup label={t(locale, "renameWindow")} description={t(locale, "renameWindowDescription")}>
+                <ShortcutRow
+                  label={t(locale, "shortcutBinding")}
+                  value={settings.shortcuts.renameWindow}
+                  capturing={capturing === "renameWindow"}
+                  onStart={() => {
+                    setShortcutError(null);
+                    setCapturing("renameWindow");
+                  }}
+                  onKeyDown={(event) => captureShortcut("renameWindow", event)}
+                  onPointerDown={(event) => capturePointerShortcut("renameWindow", event)}
+                />
+                {shortcutError && capturing === "renameWindow" && (
+                  <p className="shortcut-editor__error" role="alert">{shortcutError}</p>
+                )}
               </SettingGroup>
             </>
           )}
@@ -644,6 +726,8 @@ export function SettingsPanel({
               onOpenPluginContribution={onOpenPluginContribution}
             />
           )}
+
+          {section === "about" && <AboutSettings locale={locale} />}
         </div>
       </aside>
     </div>
@@ -804,13 +888,15 @@ function ShortcutRow({
   value,
   capturing,
   onStart,
-  onKeyDown
+  onKeyDown,
+  onPointerDown
 }: {
   label: string;
   value: string;
   capturing: boolean;
   onStart(): void;
   onKeyDown(event: React.KeyboardEvent<HTMLButtonElement>): void;
+  onPointerDown(event: React.PointerEvent<HTMLButtonElement>): void;
 }): React.JSX.Element {
   return (
     <div className="shortcut-editor__row">
@@ -820,10 +906,42 @@ function ShortcutRow({
         type="button"
         data-shortcut-capture="true"
         onClick={onStart}
+        onPointerDown={(event) => {
+          if (capturing) onPointerDown(event);
+        }}
         onKeyDown={(event) => {
           if (capturing) onKeyDown(event);
         }}
       >{capturing ? "…" : value}</button>
+    </div>
+  );
+}
+
+function PlacementChoices({
+  value,
+  locale,
+  onChange
+}: {
+  value: CanvasOverlayPlacement;
+  locale: LocaleId;
+  onChange(value: CanvasOverlayPlacement): void;
+}): React.JSX.Element {
+  const options: Array<[CanvasOverlayPlacement, string]> = [
+    ["top-left", t(locale, "topLeft")],
+    ["top-right", t(locale, "topRight")],
+    ["bottom-left", t(locale, "bottomLeft")],
+    ["bottom-right", t(locale, "bottomRight")]
+  ];
+  return (
+    <div className="segmented segmented--placement">
+      {options.map(([optionValue, label]) => (
+        <button
+          className={value === optionValue ? "segmented__button segmented__button--active" : "segmented__button"}
+          type="button"
+          key={optionValue}
+          onClick={() => onChange(optionValue)}
+        >{label}</button>
+      ))}
     </div>
   );
 }

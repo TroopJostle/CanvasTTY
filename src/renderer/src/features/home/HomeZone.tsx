@@ -27,6 +27,7 @@ import {
   resolveHomeLauncherProviders
 } from "../../lib/providers";
 import { sessionStatusIcon, sessionStatusLabel } from "../../lib/sessionStatus";
+import { sessionStatusTone } from "../../lib/sessionStatusTone";
 import { HomeMediaWidget } from "./HomeMediaWidget";
 import { PluginFrame } from "../plugins/PluginFrame";
 import type { PluginCanvasWheelInput } from "../plugins/pluginInputBridge";
@@ -433,7 +434,13 @@ export function HomeZone({
     }
     if (widgetId === "core.sessions") {
       return (
-        <section className="tile usage-list" data-wheel-owner="local" aria-label={t(locale, "activeSessions")}>
+        <section
+          className="tile usage-list"
+          data-session-row-colors={settings.sessionRowColorMode}
+          data-wheel-owner="local"
+          data-canvas-wheel-priority="local"
+          aria-label={t(locale, "activeSessions")}
+        >
           {home.sessionRows.length === 0 ? (
             <div className="home-empty">{t(locale, "noActiveSessions")}</div>
           ) : home.sessionRows.map((session) => {
@@ -445,6 +452,7 @@ export function HomeZone({
               <div className="usage-row-wrap" key={session.id}>
                 <button
                   className="usage-row"
+                  data-session-tone={sessionStatusTone(session.status)}
                   type="button"
                   onClick={() => onFocusSession(session)}
                   aria-label={`${session.title}, ${sessionStatusLabel(locale, session.status, session.provider)}`}

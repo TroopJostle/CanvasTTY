@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseDocument } from "yaml";
-import type { ProviderId } from "../../../shared/contracts.ts";
+import type { PluginAgentHookEvent, ProviderId } from "../../../shared/contracts.ts";
 
 const FILE_MODE = 0o600;
 const DIRECTORY_MODE = 0o700;
@@ -23,6 +23,12 @@ const HOOK_TIMEOUT_SECONDS = 3;
 const OPENCODE_CONFIG_CONTENT = "OPENCODE_CONFIG_CONTENT";
 const QWEN_SYSTEM_SETTINGS = "QWEN_CODE_SYSTEM_SETTINGS_PATH";
 const QWEN_HOOK_TIMEOUT_MILLISECONDS = 3_000;
+const PLUGIN_HOOK_REGISTRY_ENV = "CANVASTTY_PLUGIN_HOOK_REGISTRY";
+const PLUGIN_HOOK_RUNNER_COMMAND_ENV = "CANVASTTY_PLUGIN_HOOK_RUNNER_COMMAND";
+const PLUGIN_HOOK_RUNNER_ENV = "CANVASTTY_PLUGIN_HOOK_RUNNER";
+const PLUGIN_HOOK_SESSION_ENV = "CANVASTTY_PLUGIN_HOOK_SESSION";
+const PLUGIN_HOOK_TERMINAL_SESSION_ENV = "CANVASTTY_PLUGIN_HOOK_TERMINAL_SESSION_ID";
+const LIFECYCLE_HOOKS_ENV = "CANVASTTY_LIFECYCLE_HOOKS_ENABLED";
 const KIMI_MARKER_START = "# >>> CanvasTTY lifecycle hooks >>>";
 const KIMI_MARKER_END = "# <<< CanvasTTY lifecycle hooks <<<";
 
@@ -33,6 +39,24 @@ interface HookMapping {
   event: string;
   state: RuntimeState;
   matcher?: string;
+}
+
+interface ProviderHookCommand {
+  event: string;
+  command: string;
+  matcher?: string;
+  timeout: number;
+}
+
+export interface RuntimePluginHookRegistration {
+  key: string;
+  events: PluginAgentHookEvent[];
+}
+
+export interface RuntimePluginHookSource {
+  runner: RuntimeHookHelperLaunch;
+  registryPath: string;
+  list(provider: AgentProvider): readonly RuntimePluginHookRegistration[];
 }
 
 export interface RuntimeHookHelperLaunch {
@@ -51,6 +75,7 @@ export interface ProviderRuntimeLaunchOptions {
   qwenSystemSettingsPath?: string;
   environment?: Readonly<Record<string, string | undefined>>;
   platform?: NodeJS.Platform;
+  pluginHooks?: RuntimePluginHookSource;
 }
 
 export interface PreparedProviderRuntimeLaunch {
@@ -68,10 +93,13 @@ export class ProviderRuntimeLaunchAdapters {
   private readonly grokHomeDirectory: string;
   private readonly qwenSystemSettingsPath: string | null;
   private kimiOverlay: KimiRuntimeHooks | null = null;
+  private kimiOverlaySignature: string | null = null;
   private kimiUsers = 0;
   private hermesOverlay: HermesRuntimeHooks | null = null;
+  private hermesOverlaySignature: string | null = null;
   private hermesUsers = 0;
   private grokOverlay: GrokRuntimeHooks | null = null;
+  private grokOverlaySignature: string | null = null;
   private grokUsers = 0;
 
   constructor(options: ProviderRuntimeLaunchOptions) {
@@ -81,6 +109,15 @@ export class ProviderRuntimeLaunchAdapters {
     }
     if (!isAbsolute(options.openCodePluginPath)) {
       throw new Error("OpenCode lifecycle plugin path must be absolute.");
+    }
+    if (options.pluginHooks) {
+      validateHelper(options.pluginHooks.runner);
+      if (!isAbsolute(options.pluginHooks.registryPath)) {
+        throw new Error("Plugin hook registry path must be absolute.");
+      }
+      if (options.pluginHooks.runner.args.length !== 1 || !isAbsolute(options.pluginHooks.runner.args[0])) {
+        throw new Error("Plugin hook runner must reference one absolute script path.");
+      }
     }
     this.options = options;
     this.environment = options.environment ?? process.env;
@@ -104,13 +141,30 @@ export class ProviderRuntimeLaunchAdapters {
     );
   }
 
-  prepare(provider: AgentProvider, terminalSessionId: string): PreparedProviderRuntimeLaunch {
-    const environment = { ...(this.options.helper.env ?? {}) };
+  prepare(
+    provider: AgentProvider,
+    terminalSessionId: string,
+    coreHooksEnabled = true
+  ): PreparedProviderRuntimeLaunch {
+    const pluginRegistrations = this.options.pluginHooks?.list(provider) ?? [];
+    const pluginCommands = this.pluginHookCommands(provider, pluginRegistrations);
+    const hasHooks = coreHooksEnabled || pluginCommands.length > 0 || (provider === "opencode" && pluginRegistrations.length > 0);
+    const environment = hasHooks
+      ? {
+        ...(pluginRegistrations.length > 0 ? {
+          [PLUGIN_HOOK_TERMINAL_SESSION_ENV]: terminalSessionId
+        } : {})
+      }
+      : {};
+    if (!hasHooks) {
+      this.clearSharedOverlay(provider);
+      return prepared([], environment);
+    }
     if (provider === "claude") {
-      return prepared(claudeLifecycleArgs(this.options.helper, this.platform), environment);
+      return prepared(claudeHookArgs(this.options.helper, this.platform, coreHooksEnabled, pluginCommands), environment);
     }
     if (provider === "codex") {
-      return prepared(codexLifecycleArgs(this.options.helper, this.platform), environment);
+      return prepared(codexHookArgs(this.options.helper, this.platform, coreHooksEnabled, pluginCommands), environment);
     }
     if (provider === "qwen") {
       const path = createQwenHookSettings({
@@ -118,13 +172,20 @@ export class ProviderRuntimeLaunchAdapters {
         platform: this.platform,
         runtimeDirectory: this.options.runtimeDirectory,
         terminalSessionId,
-        baseSettingsPath: this.qwenSystemSettingsPath
+        baseSettingsPath: this.qwenSystemSettingsPath,
+        coreHooksEnabled,
+        pluginCommands
       });
       return prepared([], { ...environment, [QWEN_SYSTEM_SETTINGS]: path }, () => unlinkIfOwned(path));
     }
     if (provider === "opencode") {
+      const pluginEnvironment = this.openCodePluginEnvironment(
+        pluginRegistrations,
+        coreHooksEnabled
+      );
       return prepared([], {
         ...environment,
+        ...pluginEnvironment,
         [OPENCODE_CONFIG_CONTENT]: openCodeLifecycleConfig(
           this.environment[OPENCODE_CONFIG_CONTENT],
           this.options.openCodePluginPath
@@ -132,12 +193,12 @@ export class ProviderRuntimeLaunchAdapters {
       });
     }
     if (provider === "kimi") {
-      return prepared([], environment, this.acquireKimi());
+      return prepared([], environment, this.acquireKimi(coreHooksEnabled, pluginCommands));
     }
     if (provider === "hermes") {
-      return prepared([], environment, this.acquireHermes());
+      return prepared([], environment, this.acquireHermes(coreHooksEnabled, pluginCommands));
     }
-    return prepared([], environment, this.acquireGrok());
+    return prepared([], environment, this.acquireGrok(coreHooksEnabled, pluginCommands));
   }
 
   recoverConfigurations(): void {
@@ -147,13 +208,36 @@ export class ProviderRuntimeLaunchAdapters {
     GrokRuntimeHooks.recover(this.grokHomeDirectory);
   }
 
-  private acquireKimi(): () => void {
-    if (!this.kimiOverlay) {
+  private clearSharedOverlay(provider: AgentProvider): void {
+    if (provider === "kimi" && this.kimiOverlay) {
+      this.kimiOverlay.cleanup();
+      this.kimiOverlay = null;
+      this.kimiOverlaySignature = null;
+    } else if (provider === "hermes" && this.hermesOverlay) {
+      this.hermesOverlay.cleanup();
+      this.hermesOverlay = null;
+      this.hermesOverlaySignature = null;
+    } else if (provider === "grok" && this.grokOverlay) {
+      this.grokOverlay.cleanup();
+      this.grokOverlay = null;
+      this.grokOverlaySignature = null;
+    }
+  }
+
+  private acquireKimi(coreHooksEnabled: boolean, pluginCommands: readonly ProviderHookCommand[]): () => void {
+    const signature = overlaySignature(coreHooksEnabled, pluginCommands);
+    if (!this.kimiOverlay || this.kimiOverlaySignature !== signature) {
+      this.kimiOverlay?.cleanup();
+      this.kimiOverlay = null;
+      this.kimiOverlaySignature = null;
       this.kimiOverlay = KimiRuntimeHooks.begin(
         this.kimiHomeDirectory,
         this.options.helper,
-        this.platform
+        this.platform,
+        coreHooksEnabled,
+        pluginCommands
       );
+      this.kimiOverlaySignature = signature;
     }
     this.kimiUsers += 1;
     return once(() => {
@@ -161,17 +245,25 @@ export class ProviderRuntimeLaunchAdapters {
       if (this.kimiUsers !== 0) return;
       const overlay = this.kimiOverlay;
       this.kimiOverlay = null;
+      this.kimiOverlaySignature = null;
       overlay?.cleanup();
     });
   }
 
-  private acquireHermes(): () => void {
-    if (!this.hermesOverlay) {
+  private acquireHermes(coreHooksEnabled: boolean, pluginCommands: readonly ProviderHookCommand[]): () => void {
+    const signature = overlaySignature(coreHooksEnabled, pluginCommands);
+    if (!this.hermesOverlay || this.hermesOverlaySignature !== signature) {
+      this.hermesOverlay?.cleanup();
+      this.hermesOverlay = null;
+      this.hermesOverlaySignature = null;
       this.hermesOverlay = HermesRuntimeHooks.begin(
         this.hermesHomeDirectory,
         this.options.helper,
-        this.platform
+        this.platform,
+        coreHooksEnabled,
+        pluginCommands
       );
+      this.hermesOverlaySignature = signature;
     }
     this.hermesUsers += 1;
     return once(() => {
@@ -179,17 +271,25 @@ export class ProviderRuntimeLaunchAdapters {
       if (this.hermesUsers !== 0) return;
       const overlay = this.hermesOverlay;
       this.hermesOverlay = null;
+      this.hermesOverlaySignature = null;
       overlay?.cleanup();
     });
   }
 
-  private acquireGrok(): () => void {
-    if (!this.grokOverlay) {
+  private acquireGrok(coreHooksEnabled: boolean, pluginCommands: readonly ProviderHookCommand[]): () => void {
+    const signature = overlaySignature(coreHooksEnabled, pluginCommands);
+    if (!this.grokOverlay || this.grokOverlaySignature !== signature) {
+      this.grokOverlay?.cleanup();
+      this.grokOverlay = null;
+      this.grokOverlaySignature = null;
       this.grokOverlay = GrokRuntimeHooks.begin(
         this.grokHomeDirectory,
         this.options.helper,
-        this.platform
+        this.platform,
+        coreHooksEnabled,
+        pluginCommands
       );
+      this.grokOverlaySignature = signature;
     }
     this.grokUsers += 1;
     return once(() => {
@@ -197,8 +297,49 @@ export class ProviderRuntimeLaunchAdapters {
       if (this.grokUsers !== 0) return;
       const overlay = this.grokOverlay;
       this.grokOverlay = null;
+      this.grokOverlaySignature = null;
       overlay?.cleanup();
     });
+  }
+
+  private pluginHookCommands(
+    provider: AgentProvider,
+    registrations: readonly RuntimePluginHookRegistration[]
+  ): ProviderHookCommand[] {
+    const source = this.options.pluginHooks;
+    if (!source || provider === "opencode") return [];
+    return registrations.flatMap((registration) => registration.events.flatMap((event) => (
+      (PLUGIN_HOOK_TRIGGERS[provider][event] ?? []).map((trigger) => ({
+        event: trigger.event,
+        ...(trigger.matcher ? { matcher: trigger.matcher } : {}),
+        command: pluginHookCommand(
+          source.runner,
+          source.registryPath,
+          registration.key,
+          provider,
+          event,
+          trigger.event,
+          this.platform
+        ),
+        timeout: provider === "qwen" ? QWEN_HOOK_TIMEOUT_MILLISECONDS : HOOK_TIMEOUT_SECONDS
+      }))
+    )));
+  }
+
+  private openCodePluginEnvironment(
+    registrations: readonly RuntimePluginHookRegistration[],
+    coreHooksEnabled: boolean
+  ): Record<string, string> {
+    const source = this.options.pluginHooks;
+    return {
+      [LIFECYCLE_HOOKS_ENV]: coreHooksEnabled ? "1" : "0",
+      ...(source && registrations.length > 0 ? {
+        [PLUGIN_HOOK_REGISTRY_ENV]: source.registryPath,
+        [PLUGIN_HOOK_RUNNER_COMMAND_ENV]: source.runner.command,
+        [PLUGIN_HOOK_RUNNER_ENV]: source.runner.args[0] ?? "",
+        [PLUGIN_HOOK_SESSION_ENV]: JSON.stringify(registrations)
+      } : {})
+    };
   }
 }
 
@@ -229,6 +370,7 @@ const QWEN_HOOKS: readonly HookMapping[] = [
   { event: "PostToolUse", state: "working" },
   { event: "Stop", state: "idle" },
   { event: "StopFailure", state: "idle" },
+  { event: "SessionEnd", state: "idle" },
   { event: "Notification", matcher: "permission_prompt", state: "needs_approval" },
   { event: "Notification", matcher: "idle_prompt", state: "idle" }
 ];
@@ -264,29 +406,113 @@ const GROK_HOOKS: readonly HookMapping[] = [
   { event: "Notification", matcher: "idle_prompt", state: "idle" }
 ];
 
+interface PluginHookTrigger {
+  event: string;
+  matcher?: string;
+}
+
+const PLUGIN_HOOK_TRIGGERS: Record<AgentProvider, Partial<Record<PluginAgentHookEvent, readonly PluginHookTrigger[]>>> = {
+  claude: {
+    "session-start": [{ event: "SessionStart" }],
+    "prompt-submit": [{ event: "UserPromptSubmit" }],
+    "permission-request": [{ event: "PermissionRequest" }],
+    "after-tool": [{ event: "PostToolUse" }],
+    stop: [{ event: "Stop" }, { event: "StopFailure" }],
+    "session-end": [{ event: "SessionEnd" }]
+  },
+  codex: {
+    "session-start": [{ event: "SessionStart" }],
+    "prompt-submit": [{ event: "UserPromptSubmit" }],
+    "permission-request": [{ event: "PermissionRequest" }],
+    "after-tool": [{ event: "PostToolUse" }],
+    stop: [{ event: "Stop" }],
+    "session-end": [{ event: "SessionEnd" }]
+  },
+  qwen: {
+    "session-start": [{ event: "SessionStart" }],
+    "prompt-submit": [{ event: "UserPromptSubmit" }],
+    "permission-request": [{ event: "PermissionRequest" }],
+    "after-tool": [{ event: "PostToolUse" }],
+    stop: [{ event: "Stop" }, { event: "StopFailure" }],
+    "session-end": [{ event: "SessionEnd" }]
+  },
+  kimi: {
+    "session-start": [{ event: "SessionStart" }],
+    "prompt-submit": [{ event: "UserPromptSubmit" }],
+    "permission-request": [{ event: "PermissionRequest" }],
+    "permission-result": [{ event: "PermissionResult" }],
+    "after-tool": [{ event: "PostToolUse" }],
+    stop: [{ event: "Stop" }, { event: "StopFailure" }, { event: "Interrupt" }],
+    "session-end": [{ event: "SessionEnd" }]
+  },
+  hermes: {
+    "session-start": [{ event: "on_session_start" }],
+    "prompt-submit": [{ event: "pre_llm_call" }],
+    "permission-request": [{ event: "pre_approval_request" }],
+    "permission-result": [{ event: "post_approval_response" }],
+    "after-tool": [{ event: "post_tool_call" }],
+    stop: [{ event: "on_session_end" }],
+    "session-end": [{ event: "on_session_finalize" }]
+  },
+  grok: {
+    "session-start": [{ event: "SessionStart" }],
+    "prompt-submit": [{ event: "UserPromptSubmit" }],
+    "permission-request": [{ event: "Notification", matcher: "permission_prompt" }],
+    "after-tool": [{ event: "PostToolUse" }],
+    stop: [{ event: "Stop" }, { event: "StopFailure" }, { event: "StopCancelled" }],
+    "session-end": [{ event: "SessionEnd" }]
+  },
+  opencode: {}
+};
+
 export function claudeLifecycleArgs(
   helper: RuntimeHookHelperLaunch,
   platform: NodeJS.Platform = process.platform
 ): string[] {
+  return claudeHookArgs(helper, platform, true, []);
+}
+
+function claudeHookArgs(
+  helper: RuntimeHookHelperLaunch,
+  platform: NodeJS.Platform,
+  coreHooksEnabled: boolean,
+  pluginCommands: readonly ProviderHookCommand[]
+): string[] {
   validateHelper(helper);
-  return [
-    "--settings",
-    JSON.stringify({
-      showStatusInTerminalTab: true,
-      hooks: groupedCommandHooks(CLAUDE_HOOKS, helper, platform)
-    })
-  ];
+  return ["--settings", JSON.stringify({
+    ...(coreHooksEnabled ? { showStatusInTerminalTab: true } : {}),
+    hooks: groupProviderHookCommands([
+      ...(coreHooksEnabled ? lifecycleCommands(CLAUDE_HOOKS, helper, platform) : []),
+      ...pluginCommands
+    ])
+  })];
 }
 
 export function codexLifecycleArgs(
   helper: RuntimeHookHelperLaunch,
   platform: NodeJS.Platform = process.platform
 ): string[] {
+  return codexHookArgs(helper, platform, true, []);
+}
+
+function codexHookArgs(
+  helper: RuntimeHookHelperLaunch,
+  platform: NodeJS.Platform,
+  coreHooksEnabled: boolean,
+  pluginCommands: readonly ProviderHookCommand[]
+): string[] {
   validateHelper(helper);
-  return CODEX_HOOKS.flatMap((mapping) => {
-    const matcher = mapping.matcher ? `matcher=${tomlString(mapping.matcher)},` : "";
-    const hook = `type="command",command=${tomlString(hookCommand(helper, mapping, platform))},timeout=${HOOK_TIMEOUT_SECONDS}`;
-    return ["-c", `hooks.${mapping.event}=[{${matcher}hooks=[{${hook}}]}]`];
+  const grouped = groupProviderHookMappings([
+    ...(coreHooksEnabled ? lifecycleCommands(CODEX_HOOKS, helper, platform) : []),
+    ...pluginCommands
+  ]);
+  return Object.entries(grouped).flatMap(([event, mappings]) => {
+    const entries = mappings.map((mapping) => {
+      const matcher = mapping.matcher ? `matcher=${tomlString(mapping.matcher)},` : "";
+      const hook = `type="command",command=${tomlString(mapping.command)},timeout=${mapping.timeout}`;
+      return `{${matcher}hooks=[{${hook}}]}`;
+    }).join(",");
+    return ["-c", `hooks.${event}=[${entries}]`];
   });
 }
 
@@ -296,17 +522,22 @@ export function createQwenHookSettings(options: {
   runtimeDirectory: string;
   terminalSessionId: string;
   baseSettingsPath?: string | null;
+  coreHooksEnabled?: boolean;
+  pluginCommands?: readonly ProviderHookCommand[];
 }): string {
   validateHelper(options.helper);
   mkdirPrivate(options.runtimeDirectory);
   const path = join(options.runtimeDirectory, `qwen-hooks-${safeId(options.terminalSessionId)}.json`);
   const base = readQwenSettings(options.baseSettingsPath ?? null);
-  const lifecycleHooks = groupedCommandHooks(
+  const lifecycleHooks = groupProviderHookCommands([
+    ...(options.coreHooksEnabled === false ? [] : lifecycleCommands(
       QWEN_HOOKS,
       options.helper,
       options.platform ?? process.platform,
       QWEN_HOOK_TIMEOUT_MILLISECONDS
-  );
+    )),
+    ...(options.pluginCommands ?? [])
+  ]);
   const document = {
     ...base,
     hooks: mergeHookConfiguration(base.hooks, lifecycleHooks)
@@ -370,13 +601,19 @@ class KimiRuntimeHooks {
     this.journal = journal;
   }
 
-  static begin(home: string, helper: RuntimeHookHelperLaunch, platform: NodeJS.Platform): KimiRuntimeHooks {
+  static begin(
+    home: string,
+    helper: RuntimeHookHelperLaunch,
+    platform: NodeJS.Platform,
+    coreHooksEnabled: boolean,
+    pluginCommands: readonly ProviderHookCommand[]
+  ): KimiRuntimeHooks {
     mkdirPrivate(home);
     const path = join(home, "config.toml");
     const journalPath = join(home, ".canvastty-runtime-kimi.json");
     this.recover(home);
     const original = readOptional(path);
-    const block = kimiHookBlock(helper, platform);
+    const block = kimiHookBlock(helper, platform, coreHooksEnabled, pluginCommands);
     if (original?.includes(KIMI_MARKER_START)) {
       throw new Error("Kimi already contains an unowned CanvasTTY lifecycle hook block.");
     }
@@ -416,16 +653,22 @@ class HermesRuntimeHooks {
     this.journal = journal;
   }
 
-  static begin(home: string, helper: RuntimeHookHelperLaunch, platform: NodeJS.Platform): HermesRuntimeHooks {
+  static begin(
+    home: string,
+    helper: RuntimeHookHelperLaunch,
+    platform: NodeJS.Platform,
+    coreHooksEnabled: boolean,
+    pluginCommands: readonly ProviderHookCommand[]
+  ): HermesRuntimeHooks {
     mkdirPrivate(home);
     const path = join(home, "config.yaml");
     const journalPath = join(home, ".canvastty-runtime-hermes.json");
     this.recover(home);
     const original = readOptional(path);
-    const commands = Object.fromEntries(HERMES_HOOKS.map((mapping) => [
-      mapping.event,
-      hookCommand(helper, mapping, platform)
-    ]));
+    const commands = groupCommandsByEvent([
+      ...(coreHooksEnabled ? lifecycleCommands(HERMES_HOOKS, helper, platform) : []),
+      ...pluginCommands
+    ]);
     const mutated = mutateHermesHooks(original ?? "", commands, false);
     const journal = createTextJournal(home, "hermes", original, mutated, { commands });
     atomicWrite(journalPath, `${JSON.stringify(journal)}\n`);
@@ -459,13 +702,24 @@ class GrokRuntimeHooks {
     this.expected = expected;
   }
 
-  static begin(home: string, helper: RuntimeHookHelperLaunch, platform: NodeJS.Platform): GrokRuntimeHooks {
+  static begin(
+    home: string,
+    helper: RuntimeHookHelperLaunch,
+    platform: NodeJS.Platform,
+    coreHooksEnabled: boolean,
+    pluginCommands: readonly ProviderHookCommand[]
+  ): GrokRuntimeHooks {
     const hooksDirectory = join(home, "hooks");
     mkdirPrivate(hooksDirectory);
     const path = join(hooksDirectory, "canvastty-runtime-hooks.json");
     this.recover(home);
     if (existsSync(path)) throw new Error("Grok CanvasTTY lifecycle hook path is already occupied.");
-    const expected = `${JSON.stringify({ hooks: groupedCommandHooks(GROK_HOOKS, helper, platform) }, null, 2)}\n`;
+    const expected = `${JSON.stringify({
+      hooks: groupProviderHookCommands([
+        ...(coreHooksEnabled ? lifecycleCommands(GROK_HOOKS, helper, platform) : []),
+        ...pluginCommands
+      ])
+    }, null, 2)}\n`;
     atomicWrite(path, expected);
     return new GrokRuntimeHooks(path, expected);
   }
@@ -474,7 +728,10 @@ class GrokRuntimeHooks {
     const path = join(home, "hooks", "canvastty-runtime-hooks.json");
     const current = readOptional(path);
     if (current === null) return;
-    if (!current.includes("hook-helper.mjs") || !current.includes('"hooks"')) {
+    if (
+      (!current.includes("hook-helper.mjs") && !current.includes("plugin-hook-runner.mjs"))
+      || !current.includes('"hooks"')
+    ) {
       throw new Error("Grok CanvasTTY lifecycle hook path is occupied by an unowned file.");
     }
     unlinkSync(path);
@@ -546,10 +803,10 @@ function cleanupHermes(path: string, journal: TextOverlayJournal): void {
   }
   const commands = journal.extra.commands;
   if (!isRecord(commands)) throw new Error("Hermes lifecycle recovery journal is invalid.");
-  atomicWrite(path, mutateHermesHooks(current, commands as Record<string, string>, true), modeOf(path));
+  atomicWrite(path, mutateHermesHooks(current, commands as Record<string, string[]>, true), modeOf(path));
 }
 
-function mutateHermesHooks(raw: string, commands: Record<string, string>, remove: boolean): string {
+function mutateHermesHooks(raw: string, commands: Record<string, string[]>, remove: boolean): string {
   let document = parseDocument(raw, { strict: true, uniqueKeys: true });
   if (document.errors.length > 0) throw new Error("Hermes YAML lifecycle configuration is invalid.");
   let value = document.toJS({ maxAliasCount: 100 }) as unknown;
@@ -562,14 +819,15 @@ function mutateHermesHooks(raw: string, commands: Record<string, string>, remove
   if (hooksValue !== undefined && !isRecord(hooksValue)) {
     throw new Error("Hermes YAML hooks field must be an object.");
   }
-  for (const [event, command] of Object.entries(commands)) {
+  for (const [event, eventCommands] of Object.entries(commands)) {
     const current = hooksValue && isRecord(hooksValue) ? hooksValue[event] : undefined;
     if (current !== undefined && !Array.isArray(current)) {
       throw new Error(`Hermes hook ${event} must be an array.`);
     }
     const entries = Array.isArray(current) ? [...current] : [];
     const owned = (entry: unknown) => isRecord(entry)
-      && entry.command === command
+      && typeof entry.command === "string"
+      && eventCommands.includes(entry.command)
       && entry.timeout === HOOK_TIMEOUT_SECONDS;
     const related = (entry: unknown) => isRecord(entry)
       && typeof entry.command === "string"
@@ -580,7 +838,9 @@ function mutateHermesHooks(raw: string, commands: Record<string, string>, remove
     }
     const next = remove
       ? entries.filter((entry) => !owned(entry))
-      : owned(entries.at(-1)) ? entries : [...entries, { command, timeout: HOOK_TIMEOUT_SECONDS }];
+      : [...entries, ...eventCommands.filter((command) => !entries.some((entry) => (
+        isRecord(entry) && entry.command === command && entry.timeout === HOOK_TIMEOUT_SECONDS
+      ))).map((command) => ({ command, timeout: HOOK_TIMEOUT_SECONDS }))];
     if (next.length > 0) document.setIn(["hooks", event], next);
     else document.deleteIn(["hooks", event]);
   }
@@ -591,34 +851,79 @@ function mutateHermesHooks(raw: string, commands: Record<string, string>, remove
   return document.toString({ lineWidth: 0 });
 }
 
-function kimiHookBlock(helper: RuntimeHookHelperLaunch, platform: NodeJS.Platform): string {
-  const hooks = KIMI_HOOKS.map((mapping) => [
+function kimiHookBlock(
+  helper: RuntimeHookHelperLaunch,
+  platform: NodeJS.Platform,
+  coreHooksEnabled: boolean,
+  pluginCommands: readonly ProviderHookCommand[]
+): string {
+  const hooks = [
+    ...(coreHooksEnabled ? lifecycleCommands(KIMI_HOOKS, helper, platform) : []),
+    ...pluginCommands
+  ].map((mapping) => [
     "[[hooks]]",
     `event = ${tomlString(mapping.event)}`,
-    `command = ${tomlString(hookCommand(helper, mapping, platform))}`,
-    `timeout = ${HOOK_TIMEOUT_SECONDS}`
+    `command = ${tomlString(mapping.command)}`,
+    `timeout = ${mapping.timeout}`
   ].join("\n")).join("\n\n");
   return `${KIMI_MARKER_START}\n${hooks}\n${KIMI_MARKER_END}\n`;
 }
 
-function groupedCommandHooks(
+function lifecycleCommands(
   mappings: readonly HookMapping[],
   helper: RuntimeHookHelperLaunch,
   platform: NodeJS.Platform,
   timeout = HOOK_TIMEOUT_SECONDS
-): Record<string, unknown[]> {
+): ProviderHookCommand[] {
+  return mappings.map((mapping) => ({
+    event: mapping.event,
+    ...(mapping.matcher ? { matcher: mapping.matcher } : {}),
+    command: hookCommand(helper, mapping, platform),
+    timeout
+  }));
+}
+
+function groupProviderHookCommands(commands: readonly ProviderHookCommand[]): Record<string, unknown[]> {
+  const mappings = groupProviderHookMappings(commands);
   const grouped: Record<string, unknown[]> = {};
-  for (const mapping of mappings) {
-    (grouped[mapping.event] ??= []).push({
+  for (const [event, entries] of Object.entries(mappings)) {
+    grouped[event] = entries.map((mapping) => ({
       ...(mapping.matcher ? { matcher: mapping.matcher } : {}),
       hooks: [{
         type: "command",
-        command: hookCommand(helper, mapping, platform),
-        timeout
+        command: mapping.command,
+        timeout: mapping.timeout
       }]
-    });
+    }));
   }
   return grouped;
+}
+
+function groupProviderHookMappings(
+  commands: readonly ProviderHookCommand[]
+): Record<string, ProviderHookCommand[]> {
+  const grouped: Record<string, ProviderHookCommand[]> = {};
+  const seen = new Set<string>();
+  for (const mapping of commands) {
+    const identity = `${mapping.event}\0${mapping.matcher ?? ""}\0${mapping.command}\0${mapping.timeout}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    (grouped[mapping.event] ??= []).push(mapping);
+  }
+  return grouped;
+}
+
+function groupCommandsByEvent(commands: readonly ProviderHookCommand[]): Record<string, string[]> {
+  const grouped: Record<string, string[]> = {};
+  for (const command of commands) (grouped[command.event] ??= []).push(command.command);
+  return grouped;
+}
+
+function overlaySignature(
+  coreHooksEnabled: boolean,
+  pluginCommands: readonly ProviderHookCommand[]
+): string {
+  return JSON.stringify([coreHooksEnabled, pluginCommands]);
 }
 
 function hookCommand(
@@ -627,7 +932,45 @@ function hookCommand(
   platform: NodeJS.Platform
 ): string {
   const args = [helper.command, ...helper.args, mapping.state, mapping.event];
-  return platform === "win32" ? windowsCommand(args) : args.map(shellQuote).join(" ");
+  return commandWithEnvironment(args, helper.env ?? {}, platform);
+}
+
+function pluginHookCommand(
+  runner: RuntimeHookHelperLaunch,
+  registryPath: string,
+  key: string,
+  provider: AgentProvider,
+  event: PluginAgentHookEvent,
+  providerEvent: string,
+  platform: NodeJS.Platform
+): string {
+  const args = [
+    runner.command,
+    ...runner.args,
+    registryPath,
+    key,
+    provider,
+    event,
+    providerEvent
+  ];
+  return commandWithEnvironment(args, runner.env ?? {}, platform);
+}
+
+function commandWithEnvironment(
+  args: string[],
+  environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform
+): string {
+  const entries = Object.entries(environment);
+  if (platform === "win32") {
+    const prefix = entries.map(([key, value]) => (
+      `set "${key}=${value.replaceAll("%", "%%").replaceAll('"', '\\"')}"`
+    )).join(" && ");
+    return `${prefix ? `${prefix} && ` : ""}${windowsCommand(args)}`;
+  }
+  const prefix = entries.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ");
+  const command = args.map(shellQuote).join(" ");
+  return prefix ? `${prefix} ${command}` : command;
 }
 
 function shellQuote(value: string): string {

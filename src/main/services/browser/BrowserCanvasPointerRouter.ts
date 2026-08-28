@@ -26,6 +26,7 @@ export interface BrowserCanvasPointerRouterHost {
   getFrozenTabId(): string | null;
   isFreezeActive(): boolean;
   isNavigationOverrideActive(): boolean;
+  ownsNavigationMouseButton?(button: string | undefined): boolean;
   getCursorScreenPoint(): Point;
   endWheelSequence(): void;
   sendNavigationPointer(payload: BrowserCanvasNavigationPointerEvent): void;
@@ -45,6 +46,7 @@ interface NativeSinkPointerRelay extends PointerRelay {
 export class BrowserCanvasPointerRouter {
   private readonly host: BrowserCanvasPointerRouterHost;
   private canvasDragTabId: string | null = null;
+  private canvasDragButton: string | null = null;
   private rendererGestureActive = false;
   private navigationActive = false;
   private freezePointerRelay: PointerRelay | null = null;
@@ -102,15 +104,21 @@ export class BrowserCanvasPointerRouter {
     const pointerType = browserCanvasNavigationPointerType(
       mouse,
       this.host.isNavigationOverrideActive(),
-      this.canvasDragTabId === tab.id || this.rendererGestureActive
+      this.canvasDragTabId === tab.id || this.rendererGestureActive,
+      {
+        mouseBindingActive: this.host.ownsNavigationMouseButton?.(mouse.button as string | undefined) ?? false,
+        activeButton: this.canvasDragTabId === tab.id ? this.canvasDragButton : null
+      }
     );
     if (pointerType) {
       if (pointerType === "down") {
         this.canvasDragTabId = tab.id;
+        this.canvasDragButton = mouse.button ?? "left";
         this.syncCursors();
       }
       if (pointerType === "up" || pointerType === "cancel") {
         this.canvasDragTabId = null;
+        this.canvasDragButton = null;
         this.rendererGestureActive = false;
         this.syncCursors();
       }
@@ -143,6 +151,7 @@ export class BrowserCanvasPointerRouter {
   private cancelCanvasDrag(tabId: string): void {
     if (this.canvasDragTabId !== tabId) return;
     this.canvasDragTabId = null;
+    this.canvasDragButton = null;
     this.syncCursors();
     this.host.sendNavigationPointer({
       tabId,
@@ -388,7 +397,9 @@ export class BrowserCanvasPointerRouter {
     if (tabId === null) return false;
     const type = mouse.type === "mouseMove"
       ? "move"
-      : mouse.type === "mouseUp" && mouse.button === "left"
+      : mouse.type === "mouseUp" && (
+        this.canvasDragButton === null || mouse.button === this.canvasDragButton
+      )
         ? "up"
         : mouse.type === "mouseLeave"
           ? "cancel"
@@ -396,6 +407,7 @@ export class BrowserCanvasPointerRouter {
     if (type === null) return false;
     if (type === "up" || type === "cancel") {
       this.canvasDragTabId = null;
+      this.canvasDragButton = null;
       this.syncCursors();
     }
     event.preventDefault();

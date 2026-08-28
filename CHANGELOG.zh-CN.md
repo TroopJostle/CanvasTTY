@@ -2,6 +2,17 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.3.0
+
+- 新增可选的终端窗口恢复。CanvasTTY 仅保存窗口 identity、provider/profile、标题、项目目录、位置与尺寸；智能体通过各自原生的 project-scoped continue mode 继续会话，PTY scrollback 与 capability 不会持久化。
+- 新增空白画布右键创建的命名粉彩区域，以及以当前 camera 为中心的 RTS 小地图。HOME 与固定尺寸窗口 marker 在统一投影中移动，不再 auto-fit 或拉伸；只有 HOME 完全离开小地图后才显示边缘指示。
+- 画布导航绑定现支持 Mouse3/Mouse4/Mouse5，中键拖动继续作为直接 pan fallback。修复 wheel ownership：会话列表与已聚焦输入面默认本地滚动，只有明确的画布捕获才会接管。
+- 修复 Grok Build 首次 TUI 被裁剪：launch、restart 与 restore 都等待 renderer 测得的真实 xterm 网格。终端 resize 与 palette 变化会保留当前 scrollback 位置。
+- Appearance 新增整行智能体状态配色：空闲/不可用/完成为灰色，工作中为鼠尾草绿色，等待输入为黄色，并提供单色模式。
+- Claude 限额现使用当前运行用户的 OAuth credentials 并在存在 token 时实际请求 provider。缺失本地 credentials 会显示需要登录，不再误报为需要订阅。
+- 被拒绝的第二次启动或后台 plugin/browser 活动不再 restore、show 或 focus CanvasTTY 窗口，避免应用擅自切换虚拟桌面。
+- Agents 新增简洁的 status hook 开关，About 提供可展开 FAQ；可选 plugin agent hook 必须逐项显式信任。install/update 后 hook 保持关闭，并在移除 CanvasTTY 内部 capability 的隔离进程中运行。
+
 ## 1.2.8
 
 - Qwen Code 现已成为 HOME、Settings、CLI 发现、Normal/YOLO 配置、plugin SDK 与受限内置浏览器 MCP 桥接中的一等 launcher；使用官方 Qwen mark，所有配置仅作用于本次启动。

@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
-import type { AppSettings, CameraState, Point } from "../../../../shared/contracts";
+import type {
+  AppSettings,
+  CameraState,
+  CanvasNavigationMouseButton,
+  Point
+} from "../../../../shared/contracts";
 import {
+  canvasNavigationMouseButtonFromDomButton,
   canvasWheelIntent,
+  isCanvasNavigationBindingActive,
   normalizeCanvasWheelDeltas,
   shouldCanvasOwnWheel,
   type CanvasWheelDeltas
 } from "../../../../shared/canvasNavigation";
-import { isFocusedCanvasWidgetTarget } from "./canvasWidgetFocus";
+import {
+  isFocusedCanvasWidgetTarget,
+  isPriorityLocalCanvasWheelTarget
+} from "./canvasWidgetFocus";
 import type { CanvasWidgetFocusState } from "./useCanvasWidgetFocus";
 
 export interface CanvasWheelInput extends CanvasWheelDeltas {
@@ -105,13 +115,87 @@ export function useCanvasWheelNavigation({
   }), [viewport]);
 
   useEffect(() => {
+    const pressedButtons = new Set<CanvasNavigationMouseButton>();
+    const reservedButtons = new Set<CanvasNavigationMouseButton>();
+    const releaseButtons = (): void => {
+      for (const button of pressedButtons) {
+        window.canvasTTY.canvasNavigation.setPointerBindingState({
+          button,
+          pressed: false,
+          altKey: false,
+          ctrlKey: false,
+          metaKey: false,
+          shiftKey: false
+        });
+      }
+      pressedButtons.clear();
+      reservedButtons.clear();
+    };
+    const handlePointerDown = (event: PointerEvent): void => {
+      const button = canvasNavigationMouseButtonFromDomButton(event.button);
+      if (button === null) return;
+      const pointerState = {
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        pressedMouseButtons: new Set([button])
+      };
+      const reserved = (
+        settingsRef.current.canvasWheelCaptureMode === "key"
+        && isCanvasNavigationBindingActive(pointerState, settingsRef.current.canvasWheelOverride)
+      ) || isCanvasNavigationBindingActive(pointerState, settingsRef.current.canvasNavigationOverride);
+      if (reserved) {
+        reservedButtons.add(button);
+        event.preventDefault();
+      }
+      pressedButtons.add(button);
+      window.canvasTTY.canvasNavigation.setPointerBindingState({
+        button,
+        pressed: true,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey
+      });
+    };
+    const handlePointerUp = (event: PointerEvent): void => {
+      const button = canvasNavigationMouseButtonFromDomButton(event.button);
+      if (button === null) return;
+      if (reservedButtons.delete(button)) event.preventDefault();
+      if (!pressedButtons.delete(button)) return;
+      window.canvasTTY.canvasNavigation.setPointerBindingState({
+        button,
+        pressed: false,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey
+      });
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("pointerup", handlePointerUp, true);
+    window.addEventListener("pointercancel", releaseButtons, true);
+    window.addEventListener("blur", releaseButtons);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("pointerup", handlePointerUp, true);
+      window.removeEventListener("pointercancel", releaseButtons, true);
+      window.removeEventListener("blur", releaseButtons);
+      releaseButtons();
+    };
+  }, []);
+
+  useEffect(() => {
     const element = viewport.current;
     if (!element) return;
     const handleWheel = (event: WheelEvent): void => {
       const browserFreezeOwned = event.target instanceof Element
         && event.target.closest('[data-browser-canvas-wheel-owner="canvas"]') !== null;
+      const priorityLocalOwner = isPriorityLocalCanvasWheelTarget(event.target);
       const ownedByCanvas = browserFreezeOwned || shouldCanvasOwnWheel({
-        overFocusedWidget: isFocusedCanvasWidgetTarget(event.target, widgetFocusRef.current.id),
+        overFocusedWidget: priorityLocalOwner
+          || isFocusedCanvasWidgetTarget(event.target, widgetFocusRef.current.id),
         captureMode: settingsRef.current.canvasWheelCaptureMode,
         wheelOverrideActive: wheelOverrideActiveRef.current,
         navigationOverrideActive: canvasOverrideActiveRef.current

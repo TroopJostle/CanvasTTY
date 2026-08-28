@@ -95,7 +95,7 @@ Session counter、progress bar 与 status 必须来自真实 `SessionSnapshot`�
 2. `LimitsService` 对 refresh 去重，并维护 60 秒 cache。
 3. Codex 通过 `codex app-server` 的 `account/rateLimits/read` 查询；Claude、Kimi、OpenCode Go 与 Grok Build 使用只读 usage/billing endpoint 和对应 CLI 已有凭据。Qwen Code 因没有通用 quota-read protocol 而返回明确 unavailable reason。OpenCode Go 提供真实 rolling、weekly、monthly window；Grok Build 提供真实共享 billing period。真实响应经过结构校验，只保留 percentage、window 与 reset time。
 4. 一次成功后刷新失败时，最后的有效 snapshot 以 stale 返回。缺失或不支持的 adapter 返回明确 unavailable reason，而不是 `0%`。
-5. Claude weekly window 只适用于 Claude.ai subscription session。API Usage Billing 返回 `subscription-required`，而不是虚假 quota。CanvasTTY 不解析服务商 TUI screen。
+5. CanvasTTY 使用当前用户 Claude CLI credentials 中的 OAuth token 请求 Claude usage。缺失或不可读的 credentials 返回 `not-authenticated`；本地 credential 状态不能证明用户没有订阅。CanvasTTY 不解析服务商 TUI screen。
 
 ## 扩展点
 

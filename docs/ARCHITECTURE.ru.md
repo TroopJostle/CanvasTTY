@@ -95,7 +95,7 @@ Session counters, progress bars и statuses всегда выводятся из
 2. `LimitsService` дедуплицирует refresh и хранит 60-секундный cache.
 3. Codex опрашивается через `codex app-server` методом `account/rateLimits/read`. Claude, Kimi, OpenCode Go и Grok Build используют read-only usage/billing endpoints и credentials установленных CLI. Qwen Code возвращает явный unavailable reason: одна Qwen-сессия может работать с разными облачными или локальными провайдерами, а универсального quota-read protocol у CLI нет. OpenCode Go даёт настоящие rolling, weekly и monthly windows, Grok Build — настоящий общий billing period. Реальные ответы структурно проверяются и сокращаются до percentage, window и reset time.
 4. Если refresh не удался после успешного чтения, последний валидный snapshot возвращается как stale. Отсутствующие/неподдерживаемые adapters возвращают явную unavailable reason, а не `0%`.
-5. Weekly window Claude существует только для Claude.ai subscription session. API Usage Billing возвращает `subscription-required`, а не выдуманную quota. CanvasTTY не разбирает provider TUI screens.
+5. CanvasTTY запрашивает Claude usage с OAuth-токеном из CLI credentials текущего пользователя. Отсутствующие или нечитаемые credentials дают `not-authenticated`; локальное состояние credentials не считается доказательством отсутствия подписки. Provider TUI screens не разбираются.
 
 ## Точки расширения
 

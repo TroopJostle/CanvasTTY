@@ -2,19 +2,20 @@
 
 [English](plugins.md) · [Русский](plugins.ru.md) · [简体中文](plugins.zh-CN.md) · [Docs home](README.md)
 
-CanvasTTY runtime plugins are static web packages installed from an HTTPS GitHub repository. A plugin can contribute a HOME widget, a movable canvas app, a separate application window, or any combination of the three. Plugin HTML, CSS, and JavaScript run in an Electron sandbox without Node.js.
+CanvasTTY runtime plugins are installed from an HTTPS GitHub repository. A plugin can contribute sandboxed web surfaces and can optionally declare agent hook scripts. Web contributions run without Node.js. Agent hooks are a separate, explicit trust boundary and stay disabled until the user enables each hook in **Settings → Agents → Hooks**.
 
 ## Trust model
 
 Installing a plugin is equivalent to allowing third-party browser code to run locally. CanvasTTY reduces that trust surface, but cannot make unknown code trustworthy:
 
-- CanvasTTY downloads only the default-branch tar archive for a GitHub repository root URL and never runs `npm install`, build hooks, native modules, or repository scripts.
+- CanvasTTY downloads only the default-branch tar archive for a GitHub repository root URL and never runs `npm install`, build hooks, native modules, or repository scripts during install/update.
 - The package must contain no symlinks and is limited to 500 files or directories / 25 MB. Individual served assets are limited to 8 MB.
 - A plugin frame has an opaque sandbox origin, no access to the parent DOM, no `window.canvasTTY`, and no Node.js API.
 - The separate-window preload exposes no Node primitives. It forwards the same SDK messages through an identity-checked IPC handler.
 - Every privileged SDK method is gated by a manifest permission. Permissions are shown before the user confirms installation.
-- Provider credentials, PTY buffers, working directories, raw provider responses, and filesystem access never cross the plugin boundary.
+- Sandboxed web contributions never receive provider credentials, PTY buffers, working directories, raw provider responses, or filesystem access.
 - Disabling or uninstalling a plugin immediately stops serving its assets and closes its separate windows.
+- Declared agent hooks are never enabled by install, update, or module changes. Enabling one is equivalent to running that repository's JavaScript as a native application with the current user's OS privileges, access to the provider event payload, and potential access to user-readable configuration or credentials. Updating the plugin, replacing modules, or disabling the plugin revokes every enabled hook so changed code must be trusted again.
 
 CanvasTTY does not embed arbitrary native OS windows. A `window` contribution is a sandboxed CanvasTTY-owned `BrowserWindow`. Native reparenting is not portable or reliable across Wayland, macOS, Windows, DPI modes, popups, and GPU surfaces.
 
@@ -31,9 +32,10 @@ apps/notes.html
 apps/notes.js
 windows/focus.html
 windows/focus.js
+hooks/audit.mjs
 ```
 
-An end-to-end example lives in [`examples/plugins/studio-kit`](../examples/plugins/studio-kit).
+An end-to-end sandboxed web-surface example (without a privileged hook) lives in [`examples/plugins/studio-kit`](../examples/plugins/studio-kit).
 Editor tooling can use the [manifest JSON Schema](canvastty-plugin.schema.json) and [SDK TypeScript declarations](plugin-api.d.ts).
 
 ## Manifest v1
@@ -46,6 +48,16 @@ Editor tooling can use the [manifest JSON Schema](canvastty-plugin.schema.json) 
   "version": "1.0.0",
   "description": "Small CanvasTTY surfaces backed by real host state.",
   "permissions": ["storage", "secrets", "sessions:read", "launcher:open"],
+  "hooks": [
+    {
+      "id": "audit",
+      "title": "Local audit log",
+      "description": "Writes selected agent lifecycle events to a user-managed log.",
+      "entry": "hooks/audit.mjs",
+      "providers": ["codex", "claude", "kimi"],
+      "events": ["session-start", "permission-request", "session-end"]
+    }
+  ],
   "settingsContribution": "notes",
   "contributions": [
     {
@@ -83,6 +95,31 @@ Plugin and contribution IDs are stable persistence keys. Do not rename them afte
 A modular manifest declares integrity-checked coreFiles plus up to 16 optional modules. Every file entry contains path, exact bytes, and a SHA-256 digest. CanvasTTY downloads only the manifest for inspection, shows checkboxes, per-module size and permissions, then downloads only the core and selected module files. Changing the selection later replaces the installed package atomically and removes deselected files. A contribution may set module to disappear when that module is not installed.
 
 Module file integrity (exact byte counts and SHA-256 digests) is verified against the hashes declared in the plugin manifest, and the manifest itself is fetched from GitHub over TLS without a separate signature. The trust anchor is therefore the plugin's GitHub repository: a compromised repository can ship a new manifest with matching hashes.
+
+### Optional agent hooks
+
+`hooks` declares up to 16 JavaScript entries. A hook has a stable `id`, a display `title`, an `entry` ending in `.js`, `.mjs`, or `.cjs`, one or more agent `providers`, and one or more semantic `events`: `session-start`, `prompt-submit`, `permission-request`, `permission-result`, `after-tool`, `stop`, or `session-end`. Providers that do not expose a requested semantic event simply do not invoke that event. In a modular plugin, a hook entry must be integrity-declared by its optional `module`, or by `coreFiles` when the hook has no module. A non-modular package must contain the validated entry path.
+
+A hook-only plugin uses an empty `contributions` array and a non-empty `hooks` array. Installation only copies and validates the file. The user must inspect the repository and complete a separate trust confirmation in **Settings → Agents → Hooks**. CanvasTTY's host-owned registry is consulted for every invocation, so disabling a hook prevents subsequent invocations even when the provider session is still running. Enabling a newly installed hook may require a new or restarted agent session when that provider's launch-time hook bridge is not already present.
+
+Provider-native hook review remains in force. For example, Codex may additionally ask the user to review the launch-time CanvasTTY bridge in its own `/hooks` flow. CanvasTTY does not pass Codex's global `--dangerously-bypass-hook-trust` flag; enabling a plugin hook in CanvasTTY never weakens trust checks for unrelated provider hooks.
+
+The script runs as a separate process with the plugin directory as its working directory. It receives one JSON object on stdin:
+
+```ts
+interface CanvasTTYAgentHookInput {
+  apiVersion: 1;
+  pluginId: string;
+  hookId: string;
+  terminalSessionId: string;
+  provider: "codex" | "claude" | "qwen" | "kimi" | "opencode" | "hermes" | "grok";
+  event: "session-start" | "prompt-submit" | "permission-request" | "permission-result" | "after-tool" | "stop" | "session-end";
+  providerEvent: string;
+  payload: unknown;
+}
+```
+
+Hook stdout/stderr is discarded, execution is time-bounded, and CanvasTTY's internal runtime/browser capability tokens are removed from the child environment. This is isolation from host internals, not a sandbox: the hook still has the user's normal filesystem and process privileges.
 
 host.onStorageChange(listener) notifies every live contribution of the same plugin — canvases, HOME widgets, and separate windows — of writes made through host.storage.set, avoiding polling when a plugin coordinates several surfaces.
 

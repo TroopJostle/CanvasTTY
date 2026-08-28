@@ -5,6 +5,7 @@ import type {
   BrowserCanvasState,
   BrowserSnapshot,
   CameraState,
+  CanvasRegion,
   GithubPluginSearchResult,
   HomeAccentColors,
   HomeGridSize,
@@ -44,8 +45,14 @@ import {
   upsertSession,
   upsertSnapshot
 } from "./lib/sessionReconciliation";
-import { isRenameInputTarget, isShortcutCaptureTarget, matchesShortcut } from "./lib/shortcuts";
+import {
+  isRenameInputTarget,
+  isShortcutCaptureTarget,
+  matchesPointerShortcut,
+  matchesShortcut
+} from "./lib/shortcuts";
 import { homeGridPixelSize, homeLayoutFitsGrid, placeHomeWidget } from "./features/home/homeLayout";
+import { boundsCenterInsideRegion, translateBounds } from "./features/workspace/canvasRegions";
 
 interface HomeEditDraft {
   homeGridSize: HomeGridSize;
@@ -54,11 +61,14 @@ interface HomeEditDraft {
 
 const FALLBACK_SETTINGS: AppSettings = {
   locale: "ru",
+  restoreTerminalSessions: false,
   palette: "sage",
   homeAccentPreset: "classic",
   homeAccentColors: { ...DEFAULT_HOME_ACCENT_COLORS },
+  sessionRowColorMode: "status",
   homeLauncherProviders: ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"],
   homeLimitProviders: ["codex", "claude", "qwen", "kimi", "opencode", "grok"],
+  agentLifecycleHooksEnabled: true,
   canvasColor: "sage",
   pattern: "dots",
   snapToGrid: true,
@@ -75,6 +85,9 @@ const FALLBACK_SETTINGS: AppSettings = {
   hoverFocus: false,
   hoverFocusSpeed: "normal",
   showShortcutHints: true,
+  minimapPlacement: "top-right",
+  shortcutHintsPlacement: "bottom-right",
+  canvasControlsPlacement: "bottom-left",
   shortcuts: { ...DEFAULT_SHORTCUTS },
   mediaPath: null,
   mediaFit: "cover",
@@ -82,6 +95,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   acknowledgedDangerousProfiles: [],
   homeGridSize: { ...DEFAULT_HOME_GRID_SIZE },
   homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
+  canvasRegions: [],
   pluginCanvas: [],
   browserCanvas: null,
   browserAgentAccess: true,
@@ -398,6 +412,67 @@ export function App(): React.JSX.Element {
     void saveSettings({ browserCanvas });
   }, [saveSettings]);
 
+  const createCanvasRegion = useCallback((region: CanvasRegion): void => {
+    const canvasRegions = [...settings.canvasRegions, region];
+    setSettings((current) => ({ ...current, canvasRegions }));
+    void saveSettings({ canvasRegions });
+  }, [saveSettings, settings.canvasRegions]);
+
+  const changeCanvasRegion = useCallback((region: CanvasRegion): void => {
+    const canvasRegions = settings.canvasRegions.map((candidate) => candidate.id === region.id ? region : candidate);
+    setSettings((current) => ({ ...current, canvasRegions }));
+    void saveSettings({ canvasRegions });
+  }, [saveSettings, settings.canvasRegions]);
+
+  const changeCanvasRegionBounds = useCallback((
+    id: string,
+    bounds: SessionBounds,
+    interaction: "move" | "resize"
+  ): void => {
+    const previous = settings.canvasRegions.find((region) => region.id === id);
+    if (!previous) return;
+    const canvasRegions = settings.canvasRegions.map((region) => region.id === id
+      ? { ...region, position: bounds.position, size: bounds.size }
+      : region);
+    const patch: Partial<AppSettings> = { canvasRegions };
+
+    if (interaction === "move") {
+      const delta = {
+        x: bounds.position.x - previous.position.x,
+        y: bounds.position.y - previous.position.y
+      };
+      if (delta.x !== 0 || delta.y !== 0) {
+        const movedSessions = sessions.map((session) => {
+          if (!boundsCenterInsideRegion(session, previous)) return session;
+          const moved = translateBounds(session, delta);
+          window.canvasTTY.terminal.setBounds(session.id, moved);
+          return { ...session, ...moved };
+        });
+        const pluginCanvas = settings.pluginCanvas.map((instance) => {
+          if (!boundsCenterInsideRegion(instance, previous)) return instance;
+          const moved = translateBounds(instance, delta);
+          return { ...instance, ...moved };
+        });
+        const browserCanvas = settings.browserCanvas && boundsCenterInsideRegion(settings.browserCanvas, previous)
+          ? translateBounds(settings.browserCanvas, delta)
+          : settings.browserCanvas;
+        setSessions(movedSessions);
+        patch.pluginCanvas = pluginCanvas;
+        patch.browserCanvas = browserCanvas;
+        browserCanvasRef.current = browserCanvas;
+      }
+    }
+
+    setSettings((current) => ({ ...current, ...patch }));
+    void saveSettings(patch);
+  }, [saveSettings, sessions, settings.browserCanvas, settings.canvasRegions, settings.pluginCanvas]);
+
+  const deleteCanvasRegion = useCallback((id: string): void => {
+    const canvasRegions = settings.canvasRegions.filter((region) => region.id !== id);
+    setSettings((current) => ({ ...current, canvasRegions }));
+    void saveSettings({ canvasRegions });
+  }, [saveSettings, settings.canvasRegions]);
+
   const disposePluginCanvas = useCallback((id: string): void => {
     void saveSettings({ pluginCanvas: settings.pluginCanvas.filter((instance) => instance.id !== id) });
   }, [saveSettings, settings.pluginCanvas]);
@@ -585,13 +660,42 @@ export function App(): React.JSX.Element {
     showToast(`${t(settings.locale, "pluginInstalled")}: ${installed.manifest.name}`);
   }, [saveSettings, settings.homeGridSize, settings.homeLayout, settings.locale, showToast]);
 
-  const setPluginEnabled = useCallback(async (pluginId: string, enabled: boolean): Promise<void> => {
-    const updated = await window.canvasTTY.plugins.setEnabled(pluginId, enabled);
-    setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
+  const refreshPlugins = useCallback(async (): Promise<void> => {
+    setPlugins(await window.canvasTTY.plugins.list());
   }, []);
 
+  const setPluginEnabled = useCallback(async (pluginId: string, enabled: boolean): Promise<void> => {
+    try {
+      const updated = await window.canvasTTY.plugins.setEnabled(pluginId, enabled);
+      setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
+  }, [refreshPlugins]);
+
+  const setPluginHookEnabled = useCallback(async (
+    pluginId: string,
+    hookId: string,
+    enabled: boolean
+  ): Promise<void> => {
+    try {
+      const updated = await window.canvasTTY.plugins.setHookEnabled(pluginId, hookId, enabled);
+      setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
+  }, [refreshPlugins]);
+
   const setPluginModules = useCallback(async (pluginId: string, selectedModules: string[]): Promise<void> => {
-    const updated = await window.canvasTTY.plugins.setModules(pluginId, selectedModules);
+    let updated: InstalledPlugin;
+    try {
+      updated = await window.canvasTTY.plugins.setModules(pluginId, selectedModules);
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
     setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
     const contributions = new Set(updated.manifest.contributions.map((contribution) => contribution.id));
     await saveSettings({
@@ -603,17 +707,22 @@ export function App(): React.JSX.Element {
         instance.pluginId !== pluginId || contributions.has(instance.contributionId)
       ))
     });
-  }, [saveSettings, settings.homeLayout, settings.pluginCanvas]);
+  }, [refreshPlugins, saveSettings, settings.homeLayout, settings.pluginCanvas]);
 
   const uninstallPlugin = useCallback(async (pluginId: string): Promise<void> => {
-    await window.canvasTTY.plugins.uninstall(pluginId);
+    try {
+      await window.canvasTTY.plugins.uninstall(pluginId);
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
     setPlugins((current) => current.filter((plugin) => plugin.manifest.id !== pluginId));
     await saveSettings({
       homeLayout: settings.homeLayout.filter((placement) => !placement.widgetId.startsWith(`plugin:${pluginId}:`)),
       pluginCanvas: settings.pluginCanvas.filter((instance) => instance.pluginId !== pluginId)
     });
     showToast(t(settings.locale, "pluginRemoved"));
-  }, [saveSettings, settings.homeLayout, settings.locale, settings.pluginCanvas, showToast]);
+  }, [refreshPlugins, saveSettings, settings.homeLayout, settings.locale, settings.pluginCanvas, showToast]);
 
   const searchPlugins = useCallback((query: string): Promise<GithubPluginSearchResult[]> => (
     window.canvasTTY.plugins.search(query)
@@ -636,10 +745,16 @@ export function App(): React.JSX.Element {
   ), []);
 
   const updatePlugin = useCallback(async (pluginId: string): Promise<void> => {
-    const updated = await window.canvasTTY.plugins.update(pluginId);
+    let updated: InstalledPlugin;
+    try {
+      updated = await window.canvasTTY.plugins.update(pluginId);
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
     setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
     showToast(`${t(settings.locale, "pluginUpdated")}: ${updated.manifest.name}`);
-  }, [settings.locale, showToast]);
+  }, [refreshPlugins, settings.locale, showToast]);
 
   const openPluginCanvasContribution = useCallback(async (
     plugin: InstalledPlugin,
@@ -728,27 +843,51 @@ export function App(): React.JSX.Element {
   }, [homeEditDraft, settings.locale, showToast]);
 
   useEffect(() => {
+    const performShortcut = (shortcut: "home" | "renameWindow"): void => {
+      if (shortcut === "home") {
+        goHome();
+        return;
+      }
+      if (!activeSessionId) {
+        showToast(t(settings.locale, "selectWindowToRename"));
+        return;
+      }
+      setRenamingSessionId(activeSessionId);
+    };
     const handleShortcut = (event: KeyboardEvent): void => {
       if (event.repeat || isShortcutCaptureTarget(event.target) || isRenameInputTarget(event.target)) return;
       if (matchesShortcut(event, settings.shortcuts.home)) {
         event.preventDefault();
         event.stopPropagation();
-        goHome();
+        performShortcut("home");
         return;
       }
       if (matchesShortcut(event, settings.shortcuts.renameWindow)) {
         event.preventDefault();
         event.stopPropagation();
-        if (!activeSessionId) {
-          showToast(t(settings.locale, "selectWindowToRename"));
-          return;
-        }
-        setRenamingSessionId(activeSessionId);
+        performShortcut("renameWindow");
       }
     };
 
+    const handlePointerShortcut = (event: PointerEvent): void => {
+      if (isShortcutCaptureTarget(event.target) || isRenameInputTarget(event.target)) return;
+      const action = matchesPointerShortcut(event, settings.shortcuts.home)
+        ? "home"
+        : matchesPointerShortcut(event, settings.shortcuts.renameWindow)
+          ? "renameWindow"
+          : null;
+      if (!action) return;
+      event.preventDefault();
+      event.stopPropagation();
+      performShortcut(action);
+    };
+
     window.addEventListener("keydown", handleShortcut, true);
-    return () => window.removeEventListener("keydown", handleShortcut, true);
+    window.addEventListener("pointerdown", handlePointerShortcut, true);
+    return () => {
+      window.removeEventListener("keydown", handleShortcut, true);
+      window.removeEventListener("pointerdown", handlePointerShortcut, true);
+    };
   }, [activeSessionId, goHome, settings.locale, settings.shortcuts, showToast]);
 
   const appearance = resolveAppearanceSettings(settings);
@@ -831,6 +970,10 @@ export function App(): React.JSX.Element {
           onBrowserBoundsChange={changeBrowserBounds}
           onFocusBrowser={focusBrowser}
           onCloseBrowser={() => void closeBrowser()}
+          onCreateCanvasRegion={createCanvasRegion}
+          onChangeCanvasRegion={changeCanvasRegion}
+          onCanvasRegionBoundsChange={changeCanvasRegionBounds}
+          onDeleteCanvasRegion={deleteCanvasRegion}
         />
       </main>
 
@@ -858,6 +1001,7 @@ export function App(): React.JSX.Element {
         onUpdatePlugin={updatePlugin}
         onSetPluginModules={setPluginModules}
         onSetPluginEnabled={setPluginEnabled}
+        onSetPluginHookEnabled={setPluginHookEnabled}
         onUninstallPlugin={uninstallPlugin}
         onOpenPluginContribution={openPluginContribution}
         onToggleHomeWidget={toggleHomeWidget}

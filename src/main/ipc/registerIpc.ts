@@ -5,6 +5,7 @@ import type { IpcMainEvent, IpcMainInvokeEvent, OpenDialogOptions } from "electr
 import type {
   AppSettings,
   BrowserCommand,
+  CanvasNavigationPointerBindingInput,
   CreateSessionRequest,
   PluginBrowserOpenResponse,
   PluginCanvasRequest,
@@ -12,6 +13,7 @@ import type {
   SessionBounds
 } from "../../shared/contracts";
 import { IPC } from "../../shared/contracts";
+import { isCanvasNavigationMouseButton } from "../../shared/canvasNavigation";
 import { observeWindowState, readWindowState } from "../windowState";
 import type { SettingsStore } from "../services/SettingsStore";
 import type { TerminalManager } from "../services/TerminalManager";
@@ -45,8 +47,9 @@ interface Dependencies {
   githubAuth: GithubAuthService;
   hermesHud: HermesHudService;
   getMainWindow(): BrowserWindow | null;
-  applyBrowserSettings(settings: AppSettings): void;
+  applyBrowserSettings(settings: AppSettings): Promise<void> | void;
   setCanvasNavigationShortcutCapture(active: boolean): void;
+  setCanvasNavigationPointerBinding(input: CanvasNavigationPointerBindingInput): void;
   openPluginWindow(pluginId: string, contributionId: string): Promise<void>;
   closePluginWindows(pluginId: string): void;
   requestPluginLauncher(provider: ProviderId): void;
@@ -67,6 +70,7 @@ export function registerIpc({
   getMainWindow,
   applyBrowserSettings,
   setCanvasNavigationShortcutCapture,
+  setCanvasNavigationPointerBinding,
   openPluginWindow,
   closePluginWindows,
   requestPluginLauncher,
@@ -91,13 +95,18 @@ export function registerIpc({
   ipcMain.handle(IPC.settingsGet, () => settings.get());
   ipcMain.handle(IPC.settingsUpdate, async (_event, patch: Partial<AppSettings>) => {
     const next = await settings.update(patch);
-    applyBrowserSettings(next);
+    await applyBrowserSettings(next);
     return next;
   });
   ipcMain.on(IPC.canvasNavigationShortcutCapture, (event, active: boolean) => {
     assertMainRenderer(event, getMainWindow);
     if (typeof active !== "boolean") return;
     setCanvasNavigationShortcutCapture(active);
+  });
+  ipcMain.on(IPC.canvasNavigationPointerBinding, (event, input: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    if (!isCanvasNavigationPointerBindingInput(input)) return;
+    setCanvasNavigationPointerBinding(input);
   });
   ipcMain.on(IPC.canvasNavigationOwnerWheel, (event, input: unknown) => {
     assertMainRenderer(event, getMainWindow);
@@ -209,9 +218,23 @@ export function registerIpc({
   });
   ipcMain.handle(IPC.pluginsSetEnabled, async (_event, pluginId: string, enabled: boolean) => {
     if (typeof enabled !== "boolean") throw new Error("Plugin enabled state is invalid.");
-    const plugin = await plugins.setEnabled(pluginId, enabled);
-    if (!enabled) closePluginWindows(pluginId);
-    return plugin;
+    try {
+      return await plugins.setEnabled(pluginId, enabled);
+    } finally {
+      if (!enabled) closePluginWindows(pluginId);
+    }
+  });
+  ipcMain.handle(IPC.pluginsSetHookEnabled, async (
+    event,
+    pluginId: string,
+    hookId: string,
+    enabled: boolean
+  ) => {
+    assertMainRenderer(event, getMainWindow);
+    if (typeof pluginId !== "string" || typeof hookId !== "string" || typeof enabled !== "boolean") {
+      throw new Error("Plugin hook state is invalid.");
+    }
+    return plugins.setHookEnabled(pluginId, hookId, enabled);
   });
   ipcMain.handle(IPC.pluginsUninstall, async (_event, pluginId: string) => {
     closePluginWindows(pluginId);
@@ -575,6 +598,20 @@ export function registerIpc({
   });
   ipcMain.on(IPC.windowClose, (event) => BrowserWindow.fromWebContents(event.sender)?.close());
   ipcMain.handle(IPC.windowGetState, (event) => readWindowState(BrowserWindow.fromWebContents(event.sender)));
+}
+
+function isCanvasNavigationPointerBindingInput(
+  value: unknown
+): value is CanvasNavigationPointerBindingInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  return typeof input.button === "string"
+    && isCanvasNavigationMouseButton(input.button)
+    && typeof input.pressed === "boolean"
+    && typeof input.altKey === "boolean"
+    && typeof input.ctrlKey === "boolean"
+    && typeof input.metaKey === "boolean"
+    && typeof input.shiftKey === "boolean";
 }
 
 function assertMainRenderer(

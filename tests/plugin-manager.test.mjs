@@ -71,6 +71,24 @@ const manifest = {
   settingsContribution: "notes"
 };
 
+const hookOnlyManifest = {
+  apiVersion: 1,
+  id: "com.example.lifecycle-audit",
+  name: "Lifecycle Audit",
+  version: "1.0.0",
+  description: "Records selected agent lifecycle events.",
+  permissions: [],
+  contributions: [],
+  hooks: [{
+    id: "audit",
+    title: "Lifecycle audit",
+    description: "Receives prompt, tool, and session events.",
+    entry: "hooks/audit.mjs",
+    providers: ["codex", "claude"],
+    events: ["session-start", "prompt-submit", "after-tool", "session-end"]
+  }]
+};
+
 test("normalizes only GitHub repository root links", () => {
   assert.equal(
     normalizeGithubUrl("https://github.com/example/canvastty-clock"),
@@ -88,6 +106,28 @@ test("normalizes only GitHub repository root links", () => {
 
 test("validates all supported contribution shapes and permissions", () => {
   assert.deepEqual(validatePluginManifest(manifest), manifest);
+});
+
+test("validates hook-only plugins and rejects ambiguous executable hook declarations", () => {
+  assert.deepEqual(validatePluginManifest(hookOnlyManifest), hookOnlyManifest);
+  assert.throws(() => validatePluginManifest({
+    ...hookOnlyManifest,
+    hooks: [{ ...hookOnlyManifest.hooks[0], entry: "hooks/audit.MJS" }]
+  }), /JavaScript file/);
+  assert.throws(() => validatePluginManifest({
+    ...hookOnlyManifest,
+    hooks: [{
+      ...hookOnlyManifest.hooks[0],
+      providers: ["codex", "codex"]
+    }]
+  }), /duplicated provider/);
+  assert.throws(() => validatePluginManifest({
+    ...hookOnlyManifest,
+    hooks: [{
+      ...hookOnlyManifest.hooks[0],
+      events: ["prompt-submit", "prompt-submit"]
+    }]
+  }), /duplicated event/);
 });
 
 test("runtime manifest validation rejects unknown fields at every schema boundary", () => {
@@ -216,6 +256,116 @@ test("previews, installs, serves, stores, disables, and uninstalls a static pack
     await manager.setEnabled(installed.manifest.id, true);
     await manager.uninstall(installed.manifest.id);
     assert.deepEqual(manager.list(), []);
+  } finally {
+    await manager.dispose();
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test("plugin lifecycle hooks require opt-in and revoke trust fail-closed", async () => {
+  const userData = await mkdtemp(join(tmpdir(), "canvastty-plugin-hooks-"));
+  const manager = new PluginManager(userData, async (_url, destination) => {
+    await mkdir(join(destination, "hooks"), { recursive: true });
+    await Promise.all([
+      writeFile(join(destination, "canvastty.plugin.json"), JSON.stringify(hookOnlyManifest)),
+      writeFile(join(destination, "hooks", "audit.mjs"), "process.stdin.resume();\n")
+    ]);
+  });
+  let reloaded;
+  let failClosed;
+
+  try {
+    await manager.load();
+    const preview = await manager.previewInstall("https://github.com/example/lifecycle-audit");
+    const installed = await manager.install(preview.token);
+    assert.deepEqual(installed.enabledHooks, []);
+    assert.deepEqual(manager.runtimeHooksForProvider("codex"), []);
+
+    const enabled = await manager.setHookEnabled(installed.manifest.id, "audit", true);
+    assert.deepEqual(enabled.enabledHooks, ["audit"]);
+    assert.deepEqual(manager.runtimeHooksForProvider("codex"), [{
+      key: "com.example.lifecycle-audit:audit",
+      events: ["session-start", "prompt-submit", "after-tool", "session-end"]
+    }]);
+    assert.deepEqual(manager.runtimeHooksForProvider("qwen"), []);
+
+    const runtimeRegistryPath = manager.runtimeHookRegistryPath;
+    const runtimeRegistry = JSON.parse(await readFile(runtimeRegistryPath, "utf8"));
+    assert.equal(runtimeRegistry.version, 1);
+    assert.equal(
+      runtimeRegistry.hooks["com.example.lifecycle-audit:audit"].entry,
+      "hooks/audit.mjs"
+    );
+    if (process.platform !== "win32") {
+      assert.equal((await stat(runtimeRegistryPath)).mode & 0o777, 0o600);
+    }
+
+    await manager.dispose();
+    reloaded = new PluginManager(userData);
+    await reloaded.load();
+    assert.deepEqual(reloaded.list()[0].enabledHooks, ["audit"]);
+
+    await reloaded.setHookEnabled(installed.manifest.id, "audit", false);
+    assert.deepEqual(reloaded.runtimeHooksForProvider("codex"), []);
+    assert.deepEqual(
+      Object.keys(JSON.parse(await readFile(runtimeRegistryPath, "utf8")).hooks),
+      []
+    );
+
+    await reloaded.setHookEnabled(installed.manifest.id, "audit", true);
+    const disabled = await reloaded.setEnabled(installed.manifest.id, false);
+    assert.deepEqual(disabled.enabledHooks, []);
+    const restored = await reloaded.setEnabled(installed.manifest.id, true);
+    assert.deepEqual(restored.enabledHooks, []);
+
+    await reloaded.setHookEnabled(installed.manifest.id, "audit", true);
+    await reloaded.dispose();
+    await rm(runtimeRegistryPath);
+    failClosed = new PluginManager(userData);
+    await failClosed.load();
+    assert.deepEqual(failClosed.list()[0].enabledHooks, []);
+    assert.deepEqual(failClosed.runtimeHooksForProvider("codex"), []);
+
+    await failClosed.setHookEnabled(installed.manifest.id, "audit", true);
+    await failClosed.uninstall(installed.manifest.id);
+    assert.deepEqual(failClosed.list(), []);
+    assert.deepEqual(
+      Object.keys(JSON.parse(await readFile(runtimeRegistryPath, "utf8")).hooks),
+      []
+    );
+    await assert.rejects(stat(join(userData, "plugins", installed.manifest.id)), /ENOENT/u);
+  } finally {
+    await manager.dispose();
+    await reloaded?.dispose();
+    await failClosed?.dispose();
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test("a partial registry write cannot leave a rejected plugin hook enablement executable", async () => {
+  const userData = await mkdtemp(join(tmpdir(), "canvastty-plugin-hook-transaction-"));
+  const manager = new PluginManager(userData, async (_url, destination) => {
+    await mkdir(join(destination, "hooks"), { recursive: true });
+    await Promise.all([
+      writeFile(join(destination, "canvastty.plugin.json"), JSON.stringify(hookOnlyManifest)),
+      writeFile(join(destination, "hooks", "audit.mjs"), "process.stdin.resume();\n")
+    ]);
+  });
+
+  try {
+    await manager.load();
+    const preview = await manager.previewInstall("https://github.com/example/lifecycle-audit");
+    const installed = await manager.install(preview.token);
+    const registryPath = join(userData, "plugins.json");
+    await rm(registryPath);
+    await mkdir(registryPath);
+
+    await assert.rejects(manager.setHookEnabled(installed.manifest.id, "audit", true));
+    assert.deepEqual(manager.list()[0].enabledHooks, []);
+    assert.deepEqual(
+      Object.keys(JSON.parse(await readFile(manager.runtimeHookRegistryPath, "utf8")).hooks),
+      []
+    );
   } finally {
     await manager.dispose();
     await rm(userData, { recursive: true, force: true });

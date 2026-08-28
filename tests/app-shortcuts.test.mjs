@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   displayCanvasNavigationBinding,
+  matchesPointerShortcut,
   matchesShortcut,
-  shortcutFromKeyboardEvent
+  shortcutFromKeyboardEvent,
+  shortcutFromPointerEvent
 } from "../src/renderer/src/lib/shortcuts.ts";
 
 const keyEvent = (key, modifiers = {}) => ({
@@ -13,6 +15,22 @@ const keyEvent = (key, modifiers = {}) => ({
   metaKey: false,
   shiftKey: false,
   ...modifiers
+});
+
+test("captures and matches middle, back, and forward mouse buttons", () => {
+  const pointerEvent = (button, modifiers = {}) => ({
+    button,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    ...modifiers
+  });
+  assert.equal(shortcutFromPointerEvent(pointerEvent(1)), "Mouse3");
+  assert.equal(shortcutFromPointerEvent(pointerEvent(3)), "Mouse4");
+  assert.equal(shortcutFromPointerEvent(pointerEvent(4, { ctrlKey: true })), "Ctrl+Mouse5");
+  assert.equal(shortcutFromPointerEvent(pointerEvent(0)), null);
+  assert.equal(matchesPointerShortcut(pointerEvent(3), "Mouse4"), true);
 });
 
 test("captures plain defaults and canonical modifier order", () => {

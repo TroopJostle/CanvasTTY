@@ -285,14 +285,27 @@ export class LimitsService {
   }
 }
 
-async function readClaudeUsage(clientVersion: string): Promise<unknown> {
-  const configRoot = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
-  const credentials = await readCredentialFile(join(configRoot, ".credentials.json"), "subscription-required");
+export interface ClaudeUsageReadOptions {
+  configRoot?: string;
+  request?: (
+    url: string,
+    accessToken: string,
+    additionalHeaders: Record<string, string>
+  ) => Promise<unknown>;
+}
+
+export async function readClaudeUsage(
+  clientVersion: string,
+  options: ClaudeUsageReadOptions = {}
+): Promise<unknown> {
+  const configRoot = options.configRoot ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+  const credentials = await readCredentialFile(join(configRoot, ".credentials.json"), "not-authenticated");
   const oauth = isRecord(credentials.claudeAiOauth) ? credentials.claudeAiOauth : null;
   const accessToken = cleanSecret(oauth?.accessToken);
-  if (!accessToken) throw new LimitsAdapterError("subscription-required");
+  // Missing credentials describe only this runtime user; they do not prove anything about the user's plan.
+  if (!accessToken) throw new LimitsAdapterError("not-authenticated");
 
-  return fetchUsageJson(CLAUDE_USAGE_URL, accessToken, {
+  return (options.request ?? fetchUsageJson)(CLAUDE_USAGE_URL, accessToken, {
     "anthropic-beta": "oauth-2025-04-20",
     "user-agent": `canvastty/${clientVersion}`
   });
