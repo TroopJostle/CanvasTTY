@@ -15,6 +15,33 @@ export type CanvasWheelCaptureMode = "off" | "always" | "key";
 export type BrowserViewportSurface = "native" | "placeholder" | "hidden";
 export type FocusActivation = "off" | "single" | "double";
 export type ShortcutAction = "home" | "renameWindow";
+export type RadialLauncherActionId = "note" | "browser" | "settings";
+export type RadialLauncherItemId = ProviderId | RadialLauncherActionId;
+
+export const RADIAL_LAUNCHER_ITEMS: readonly RadialLauncherItemId[] = [
+  "codex",
+  "claude",
+  "qwen",
+  "kimi",
+  "opencode",
+  "hermes",
+  "grok",
+  "terminal",
+  "note",
+  "browser",
+  "settings"
+];
+
+export const DEFAULT_RADIAL_LAUNCHER_ITEMS: readonly RadialLauncherItemId[] = [
+  "codex",
+  "claude",
+  "qwen",
+  "opencode",
+  "note",
+  "terminal",
+  "browser",
+  "settings"
+];
 
 export interface HomeAccentColors {
   clock: string;
@@ -116,6 +143,7 @@ export interface AppSettings {
   homeAccentColors: HomeAccentColors;
   homeLauncherProviders: AgentProviderId[];
   homeLimitProviders: LimitProviderId[];
+  radialLauncherItems: RadialLauncherItemId[];
   canvasColor: CanvasColorId;
   pattern: CanvasPatternId;
   snapToGrid: boolean;

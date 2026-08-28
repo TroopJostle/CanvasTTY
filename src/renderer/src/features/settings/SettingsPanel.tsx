@@ -16,6 +16,7 @@ import type {
   InstalledPlugin,
   LimitProviderId,
   LocaleId,
+  RadialLauncherItemId,
   PluginContribution,
   PluginGridSize,
   PluginManifest,
@@ -24,7 +25,11 @@ import type {
   ShortcutAction,
   ZoomSensitivity
 } from "../../../../shared/contracts";
-import { BROWSER_PROVIDER_COLORS } from "../../../../shared/contracts";
+import {
+  BROWSER_PROVIDER_COLORS,
+  DEFAULT_RADIAL_LAUNCHER_ITEMS,
+  RADIAL_LAUNCHER_ITEMS
+} from "../../../../shared/contracts";
 import {
   canvasOverrideBindingConflicts,
   defaultCanvasWheelBinding
@@ -50,6 +55,8 @@ import {
   resolveAppearanceSettings
 } from "./appearanceSettings";
 import { CanvasNavigationShortcutEditor } from "./CanvasNavigationShortcutEditor";
+import { itemLabel } from "../launcher/QuickRadialMenu";
+import { setRadialLauncherItemEnabled } from "../launcher/radialLauncher";
 
 type SettingsSection = "general" | "appearance" | "agents" | "controls" | "browser" | "plugins";
 
@@ -347,6 +354,46 @@ export function SettingsPanel({
 
           {section === "agents" && (
             <>
+              <SettingGroup
+                label={t(locale, "quickLauncher")}
+                description={t(locale, "quickLauncherDescription")}
+              >
+                <div className="agent-launcher-settings">
+                  {RADIAL_LAUNCHER_ITEMS.map((item) => {
+                    const enabled = settings.radialLauncherItems.includes(item);
+                    const provider = AGENT_PROVIDERS.includes(item as never) || item === "terminal"
+                      ? item as Exclude<RadialLauncherItemId, "note" | "browser" | "settings">
+                      : null;
+                    return (
+                      <div className="agent-launcher-settings__row" key={item}>
+                        <span className="agent-launcher-settings__identity">
+                          {provider
+                            ? <ProviderIcon provider={provider} size="small" />
+                            : <UiIcon name={item === "browser" ? "browser" : item === "settings" ? "settings" : "plus"} size={20} />}
+                          <strong>{itemLabel(locale, item)}</strong>
+                        </span>
+                        <Segmented
+                          value={enabled ? "on" : "off"}
+                          options={[["on", t(locale, "on")], ["off", t(locale, "off")]]}
+                          onChange={(value) => void onChange({
+                            radialLauncherItems: setRadialLauncherItemEnabled(
+                              settings.radialLauncherItems,
+                              item,
+                              value === "on"
+                            )
+                          })}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="setting-actions">
+                  <span>{t(locale, "quickLauncherCount").replace("{count}", String(settings.radialLauncherItems.length))}</span>
+                  <button type="button" onClick={() => void onChange({ radialLauncherItems: [...DEFAULT_RADIAL_LAUNCHER_ITEMS] })}>
+                    {t(locale, "useDefaults")}
+                  </button>
+                </div>
+              </SettingGroup>
               <SettingGroup
                 label={t(locale, "homeLauncherAgents")}
                 description={t(locale, "homeLauncherAgentsDescription")}

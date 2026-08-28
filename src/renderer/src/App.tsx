@@ -28,6 +28,7 @@ import {
   DEFAULT_HOME_ACCENT_COLORS,
   DEFAULT_HOME_GRID_SIZE,
   DEFAULT_HOME_LAYOUT,
+  DEFAULT_RADIAL_LAUNCHER_ITEMS,
   DEFAULT_SHORTCUTS
 } from "../../shared/contracts";
 import { TitleBar } from "./components/TitleBar";
@@ -60,6 +61,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   homeAccentColors: { ...DEFAULT_HOME_ACCENT_COLORS },
   homeLauncherProviders: ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"],
   homeLimitProviders: ["codex", "claude", "qwen", "kimi", "opencode", "grok"],
+  radialLauncherItems: [...DEFAULT_RADIAL_LAUNCHER_ITEMS],
   canvasColor: "sage",
   pattern: "dots",
   snapToGrid: true,
@@ -400,16 +402,20 @@ export function App(): React.JSX.Element {
     void saveSettings({ browserCanvas });
   }, [saveSettings]);
 
-  const createStickyNote = useCallback((): void => {
+  const createStickyNote = useCallback((anchor?: Point): void => {
     const viewport = canvasViewportSize();
     const size = { width: 280, height: 220 };
     const cascade = (settings.stickyNotes.length % 8) * 18;
+    const center = anchor ?? {
+      x: (viewport.width / 2 - camera.x) / camera.zoom,
+      y: (viewport.height / 2 - camera.y) / camera.zoom
+    };
     const note: StickyNote = {
       id: crypto.randomUUID(),
       text: "",
       position: {
-        x: (viewport.width / 2 - camera.x) / camera.zoom - size.width / 2 + cascade,
-        y: (viewport.height / 2 - camera.y) / camera.zoom - size.height / 2 + cascade
+        x: center.x - size.width / 2 + cascade,
+        y: center.y - size.height / 2 + cascade
       },
       size
     };

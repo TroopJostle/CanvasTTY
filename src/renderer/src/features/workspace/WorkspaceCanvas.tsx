@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import type {
   AgentProviderId,
   AppSettings,
@@ -9,6 +9,8 @@ import type {
   HomeWidgetPlacement,
   InstalledPlugin,
   LimitsSnapshot,
+  Point,
+  RadialLauncherItemId,
   SessionBounds,
   SessionSnapshot
 } from "../../../../shared/contracts";
@@ -22,6 +24,7 @@ import type { LimitsLoadState } from "../home/homeModel";
 import { homeGridPixelSize, homeLayoutFitsGrid } from "../home/homeLayout";
 import { BrowserCard } from "../browser/BrowserCard";
 import { StickyNoteCard } from "../notes/StickyNoteCard";
+import { RadialLauncher } from "../launcher/QuickRadialMenu";
 import {
   browserCanvasWidgetId,
   canvasWidgetTarget,
@@ -68,7 +71,7 @@ interface WorkspaceCanvasProps {
   onPluginCanvasBoundsChange(id: string, bounds: SessionBounds): void;
   onDisposePluginCanvas(id: string): void;
   onFocusPluginCanvas(id: string): void;
-  onCreateStickyNote(): void;
+  onCreateStickyNote(position?: Point): void;
   onStickyNoteBoundsChange(id: string, bounds: SessionBounds): void;
   onStickyNoteTextChange(id: string, text: string): void;
   onDisposeStickyNote(id: string): void;
@@ -128,6 +131,12 @@ export function WorkspaceCanvas({
   onCloseBrowser
 }: WorkspaceCanvasProps): React.JSX.Element {
   const viewport = useRef<HTMLDivElement>(null);
+  const [radialLauncher, setRadialLauncher] = useState<{
+    anchor: Point;
+    pointerAnchor: Point;
+    canvasPosition: Point;
+    pointerId: number;
+  } | null>(null);
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
   const commitCamera = useCallback((next: CameraState): void => {
@@ -177,11 +186,44 @@ export function WorkspaceCanvas({
   };
   const homeLayoutValid = homeLayoutFitsGrid(settings.homeLayout, settings.homeGridSize);
 
+  const activateRadialItem = useCallback((item: RadialLauncherItemId): void => {
+    const launcher = radialLauncher;
+    setRadialLauncher(null);
+    if (!launcher) return;
+    if (item === "note") onCreateStickyNote(launcher.canvasPosition);
+    else if (item === "browser") onOpenBrowser();
+    else if (item === "settings") onOpenSettings();
+    else if (item === "terminal") onOpenTerminal();
+    else onOpenAgent(item);
+  }, [onCreateStickyNote, onOpenAgent, onOpenBrowser, onOpenSettings, onOpenTerminal, radialLauncher]);
+
+  const openRadialLauncher = useCallback((event: React.PointerEvent<HTMLDivElement>): boolean => {
+    if (event.button !== 2 || shouldKeepNativeContextMenu(event.target)) return false;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const anchor = {
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top
+    };
+    setRadialLauncher({
+      anchor,
+      pointerAnchor: { x: event.clientX, y: event.clientY },
+      canvasPosition: {
+        x: (event.clientX - bounds.left - cameraRef.current.x) / cameraRef.current.zoom,
+        y: (event.clientY - bounds.top - cameraRef.current.y) / cameraRef.current.zoom
+      },
+      pointerId: event.pointerId
+    });
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }, []);
+
   return (
     <div
       ref={viewport}
       className={`workspace pattern-${settings.pattern} ${pointerNavigation.panning ? "workspace--panning" : ""} ${canvasOverrideActive ? "workspace--canvas-override" : ""}`}
       onPointerDownCapture={(event) => {
+        if (openRadialLauncher(event)) return;
         if (pointerNavigation.handlePointerDownCapture(event)) return;
         const target = canvasWidgetTarget(event.target);
         if (target.focusableWidgetId !== null) {
@@ -200,6 +242,9 @@ export function WorkspaceCanvas({
       onPointerUp={pointerNavigation.handlePointerEnd}
       onPointerCancel={pointerNavigation.handlePointerEnd}
       onPointerLeave={pointerNavigation.handlePointerLeave}
+      onContextMenu={(event) => {
+        if (!shouldKeepNativeContextMenu(event.target)) event.preventDefault();
+      }}
     >
       <div className="workspace__scene" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}>
         <HomeZone
@@ -395,7 +440,7 @@ export function WorkspaceCanvas({
 
       <div className="canvas-controls" data-interactive="true">
         <button type="button" onClick={onGoHome} title={t(settings.locale, "home")}><UiIcon name="home" size={17} /></button>
-        <button type="button" onClick={onCreateStickyNote} title={t(settings.locale, "newStickyNote")} aria-label={t(settings.locale, "newStickyNote")}><UiIcon name="plus" size={17} /></button>
+        <button type="button" onClick={() => onCreateStickyNote()} title={t(settings.locale, "newStickyNote")} aria-label={t(settings.locale, "newStickyNote")}><UiIcon name="plus" size={17} /></button>
         <button type="button" onClick={() => wheelNavigation.zoomBy(0.82)} title={t(settings.locale, "zoomOut")}><UiIcon name="zoom-out" size={17} /></button>
         <button type="button" onClick={() => wheelNavigation.zoomBy(1.22)} title={t(settings.locale, "zoomIn")}><UiIcon name="zoom-in" size={17} /></button>
       </div>
@@ -423,6 +468,23 @@ export function WorkspaceCanvas({
           )}
         </aside>
       )}
+      {radialLauncher && (
+        <RadialLauncher
+          anchor={radialLauncher.anchor}
+          pointerAnchor={radialLauncher.pointerAnchor}
+          items={settings.radialLauncherItems}
+          locale={settings.locale}
+          pointerId={radialLauncher.pointerId}
+          onActivate={activateRadialItem}
+          onClose={() => setRadialLauncher(null)}
+        />
+      )}
     </div>
   );
+}
+
+function shouldKeepNativeContextMenu(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest(
+    'input, textarea, select, [contenteditable="true"], .terminal-card__surface, iframe, [data-radial-launcher-native="true"]'
+  ));
 }

@@ -19,6 +19,7 @@ import type {
   MediaFit,
   PaletteId,
   PluginCanvasInstance,
+  RadialLauncherItemId,
   ShortcutBindings,
   StickyNote,
   ZoomSensitivity
@@ -27,10 +28,12 @@ import {
   DEFAULT_HOME_ACCENT_COLORS,
   DEFAULT_HOME_GRID_SIZE,
   DEFAULT_HOME_LAYOUT,
+  DEFAULT_RADIAL_LAUNCHER_ITEMS,
   HOME_GRID_MAX_COLUMNS,
   HOME_GRID_MAX_ROWS,
   HOME_GRID_MIN_COLUMNS,
-  HOME_GRID_MIN_ROWS
+  HOME_GRID_MIN_ROWS,
+  RADIAL_LAUNCHER_ITEMS
 } from "../../shared/contracts.ts";
 import {
   canvasNavigationPlatform,
@@ -61,6 +64,7 @@ const ZOOM_SENSITIVITIES = new Set<ZoomSensitivity>(["slow", "normal", "fast"]);
 const FOCUS_ACTIVATIONS = new Set<FocusActivation>(["off", "single", "double"]);
 const CANVAS_WHEEL_CAPTURE_MODES = new Set<CanvasWheelCaptureMode>(["off", "always", "key"]);
 const SHORTCUT_MODIFIERS = new Set(["Ctrl", "Alt", "Shift", "Meta"]);
+const RADIAL_LAUNCHER_ITEM_SET = new Set<RadialLauncherItemId>(RADIAL_LAUNCHER_ITEMS);
 const DEFAULT_SHORTCUTS: ShortcutBindings = { home: "Home", renameWindow: "F2" };
 
 export class SettingsStore {
@@ -110,6 +114,7 @@ export class SettingsStore {
         || !("homeLauncherProviders" in source)
         || !("homeLimitProviders" in source)
         || !("stickyNotes" in source)
+        || !("radialLauncherItems" in source)
         || !("canvasColor" in source)
         || source.canvasColor === "palette"
         || source.settingsVersion !== SETTINGS_VERSION;
@@ -200,6 +205,7 @@ function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform
     homeAccentColors: { ...DEFAULT_HOME_ACCENT_COLORS },
     homeLauncherProviders: [...AGENT_PROVIDERS],
     homeLimitProviders: [...LIMIT_PROVIDERS],
+    radialLauncherItems: [...DEFAULT_RADIAL_LAUNCHER_ITEMS],
     canvasColor: "sage",
     pattern: "dots",
     snapToGrid: true,
@@ -285,6 +291,10 @@ export function normalizeSettings(
     source.homeLimitProviders,
     fallback.homeLimitProviders ?? LIMIT_PROVIDERS
   );
+  const radialLauncherItems = normalizeRadialLauncherItems(
+    source.radialLauncherItems,
+    fallback.radialLauncherItems ?? [...DEFAULT_RADIAL_LAUNCHER_ITEMS]
+  );
   const palette = PALETTES.has(source.palette as PaletteId) ? source.palette as PaletteId : fallback.palette;
   const canvasColorCandidate = (source as Record<string, unknown>).canvasColor;
   const canvasColor = canvasColorCandidate === undefined || canvasColorCandidate === "palette"
@@ -302,6 +312,7 @@ export function normalizeSettings(
     homeAccentColors,
     homeLauncherProviders,
     homeLimitProviders,
+    radialLauncherItems,
     canvasColor,
     pattern: PATTERNS.has(source.pattern as CanvasPatternId)
       ? source.pattern as CanvasPatternId
@@ -358,6 +369,20 @@ export function normalizeSettings(
       ? source.browserRestoreTabs
       : fallback.browserRestoreTabs
   };
+}
+
+export function normalizeRadialLauncherItems(
+  candidate: unknown,
+  fallback: readonly RadialLauncherItemId[] = DEFAULT_RADIAL_LAUNCHER_ITEMS
+): RadialLauncherItemId[] {
+  if (!Array.isArray(candidate)) return [...fallback];
+  const result: RadialLauncherItemId[] = [];
+  for (const item of candidate) {
+    if (typeof item !== "string" || !RADIAL_LAUNCHER_ITEM_SET.has(item as RadialLauncherItemId)) continue;
+    if (!result.includes(item as RadialLauncherItemId)) result.push(item as RadialLauncherItemId);
+    if (result.length === 8) break;
+  }
+  return result.length > 0 ? result : [...fallback];
 }
 
 function normalizeHomeAccentColors(candidate: unknown, fallback: HomeAccentColors): HomeAccentColors {
