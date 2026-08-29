@@ -5,6 +5,7 @@ import type {
   CameraState,
   CanvasRegion,
   LocaleId,
+  MinimapInteractionMode,
   PluginCanvasInstance,
   SessionBounds,
   SessionSnapshot,
@@ -13,6 +14,7 @@ import type {
 import { t } from "../../lib/i18n";
 import {
   cameraWorldViewport,
+  minimapCameraForPointerDrag,
   minimapAreaForBounds,
   minimapEdgePointForBounds,
   minimapPointForBounds,
@@ -29,6 +31,7 @@ interface CanvasMinimapProps {
   pluginCanvas: readonly PluginCanvasInstance[];
   browserCanvas: BrowserCanvasState | null;
   locale: LocaleId;
+  interactionMode: MinimapInteractionMode;
   onCameraChange(camera: CameraState): void;
 }
 
@@ -47,6 +50,7 @@ export function CanvasMinimap({
   pluginCanvas,
   browserCanvas,
   locale,
+  interactionMode,
   onCameraChange
 }: CanvasMinimapProps): React.JSX.Element {
   const surface = useRef<HTMLSpanElement>(null);
@@ -122,17 +126,16 @@ export function CanvasMinimap({
     if (!previous || !element) return;
     const bounds = element.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
-    const current = cameraRef.current;
-    const worldDelta = {
-      x: (clientX - previous.clientX) / bounds.width * worldBounds.size.width,
-      y: (clientY - previous.clientY) / bounds.height * worldBounds.size.height
-    };
+    const next = minimapCameraForPointerDrag(
+      interactionMode,
+      cameraRef.current,
+      { x: clientX - previous.clientX, y: clientY - previous.clientY },
+      { width: bounds.width, height: bounds.height },
+      worldBounds
+    );
+    if (!next) return;
     dragPointer.current = { clientX, clientY };
-    applyCamera({
-      ...current,
-      x: current.x - worldDelta.x * current.zoom,
-      y: current.y - worldDelta.y * current.zoom
-    });
+    applyCamera(next);
   };
 
   return (
@@ -140,14 +143,19 @@ export function CanvasMinimap({
       className="canvas-minimap"
       type="button"
       data-interactive="true"
+      data-interaction-mode={interactionMode}
       aria-label={t(locale, "minimap")}
       title={t(locale, "minimap")}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.preventDefault();
         event.stopPropagation();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        dragPointer.current = { clientX: event.clientX, clientY: event.clientY };
+        if (interactionMode === "drag") {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          dragPointer.current = { clientX: event.clientX, clientY: event.clientY };
+        } else {
+          dragPointer.current = null;
+        }
         navigate(event.clientX, event.clientY);
       }}
       onPointerMove={(event) => {

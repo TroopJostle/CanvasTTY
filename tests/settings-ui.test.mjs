@@ -44,11 +44,15 @@ test("canvas overlays share configurable collision-safe corner slots", async () 
     readFile(minimapPath, "utf8")
   ]);
   assert.match(settings, /settings\.minimapPlacement/);
+  assert.match(settings, /settings\.minimapInteractionMode/);
   assert.match(settings, /settings\.shortcutHintsPlacement/);
   assert.match(settings, /settings\.canvasControlsPlacement/);
   assert.match(workspace, /CANVAS_OVERLAY_PLACEMENTS\.map/);
   assert.match(workspace, /<CanvasMinimap/);
+  assert.match(workspace, /interactionMode=\{settings\.minimapInteractionMode\}/);
   assert.match(minimap, /setPointerCapture/);
+  assert.match(minimap, /interactionMode === "drag"/);
+  assert.match(minimap, /data-interaction-mode=\{interactionMode\}/);
   assert.match(minimap, /applyCamera\(\{/);
 });
 

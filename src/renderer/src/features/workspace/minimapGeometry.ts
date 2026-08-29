@@ -1,4 +1,10 @@
-import type { CameraState, Point, SessionBounds, Size } from "../../../../shared/contracts";
+import type {
+  CameraState,
+  MinimapInteractionMode,
+  Point,
+  SessionBounds,
+  Size
+} from "../../../../shared/contracts";
 
 export const MINIMAP_SURFACE_SIZE = { width: 172, height: 104 } as const;
 export const MINIMAP_VIEWPORT_MARKER_SIZE = { width: 46, height: 30 } as const;
@@ -115,6 +121,23 @@ export function minimapWorldPoint(
   return {
     x: worldBounds.position.x + clamp(normalized.x, 0, 1) * worldBounds.size.width,
     y: worldBounds.position.y + clamp(normalized.y, 0, 1) * worldBounds.size.height
+  };
+}
+
+export function minimapCameraForPointerDrag(
+  interactionMode: MinimapInteractionMode,
+  camera: CameraState,
+  pointerDelta: Point,
+  surfaceSize: Size,
+  worldBounds: SessionBounds
+): CameraState | null {
+  if (interactionMode !== "drag" || surfaceSize.width <= 0 || surfaceSize.height <= 0) {
+    return null;
+  }
+  return {
+    ...camera,
+    x: camera.x - pointerDelta.x / surfaceSize.width * worldBounds.size.width * camera.zoom,
+    y: camera.y - pointerDelta.y / surfaceSize.height * worldBounds.size.height * camera.zoom
   };
 }
 

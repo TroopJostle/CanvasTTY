@@ -86,6 +86,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   hoverFocusSpeed: "normal",
   showShortcutHints: true,
   minimapPlacement: "top-right",
+  minimapInteractionMode: "click",
   shortcutHintsPlacement: "bottom-right",
   canvasControlsPlacement: "bottom-left",
   shortcuts: { ...DEFAULT_SHORTCUTS },

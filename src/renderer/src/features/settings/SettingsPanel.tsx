@@ -17,6 +17,7 @@ import type {
   InstalledPlugin,
   LimitProviderId,
   LocaleId,
+  MinimapInteractionMode,
   PluginContribution,
   PluginGridSize,
   PluginManifest,
@@ -513,6 +514,21 @@ export function SettingsPanel({
                   value={settings.snapToGrid ? "on" : "off"}
                   options={[["on", t(locale, "on")], ["off", t(locale, "off")]]}
                   onChange={(value) => void onChange({ snapToGrid: value === "on" })}
+                />
+              </SettingGroup>
+              <SettingGroup
+                label={t(locale, "minimapInteractionMode")}
+                description={t(locale, "minimapInteractionModeDescription")}
+              >
+                <Segmented
+                  value={settings.minimapInteractionMode}
+                  options={([
+                    ["click", t(locale, "minimapInteractionClick")],
+                    ["drag", t(locale, "minimapInteractionDrag")]
+                  ] as [MinimapInteractionMode, string][])}
+                  onChange={(value) => void onChange({
+                    minimapInteractionMode: value as MinimapInteractionMode
+                  })}
                 />
               </SettingGroup>
               <SettingGroup label={t(locale, "edgePan")} description={t(locale, "edgePanDescription")}>

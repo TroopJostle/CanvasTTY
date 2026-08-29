@@ -493,6 +493,7 @@ export function WorkspaceCanvas({
                 pluginCanvas={settings.pluginCanvas}
                 browserCanvas={settings.browserCanvas}
                 locale={settings.locale}
+                interactionMode={settings.minimapInteractionMode}
                 onCameraChange={commitCamera}
               />
             )}

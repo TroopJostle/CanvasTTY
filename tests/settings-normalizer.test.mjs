@@ -43,6 +43,7 @@ const fallback = {
   hoverFocusSpeed: "normal",
   showShortcutHints: true,
   minimapPlacement: "top-right",
+  minimapInteractionMode: "click",
   shortcutHintsPlacement: "bottom-right",
   canvasControlsPlacement: "bottom-left",
   shortcuts: { home: "Home", renameWindow: "F2" },
@@ -72,6 +73,7 @@ test("keeps valid wheel, edge pan, zoom, and focus values", () => {
       edgePanSpeed: "fast",
       zoomSensitivity: "slow",
       canvasWheelCaptureMode: "always",
+      minimapInteractionMode: "drag",
       hoverFocus: true,
       hoverFocusSpeed: "fast"
     },
@@ -83,6 +85,7 @@ test("keeps valid wheel, edge pan, zoom, and focus values", () => {
   assert.equal(normalized.edgePanSpeed, "fast");
   assert.equal(normalized.zoomSensitivity, "slow");
   assert.equal(normalized.canvasWheelCaptureMode, "always");
+  assert.equal(normalized.minimapInteractionMode, "drag");
   assert.equal(normalized.hoverFocus, true);
   assert.equal(normalized.hoverFocusSpeed, "fast");
 });
@@ -104,6 +107,7 @@ test("falls back when edge pan and zoom values are garbage", () => {
   assert.equal(normalized.showShortcutHints, fallback.showShortcutHints);
   assert.equal(normalized.sessionRowColorMode, fallback.sessionRowColorMode);
   assert.equal(normalized.minimapPlacement, fallback.minimapPlacement);
+  assert.equal(normalized.minimapInteractionMode, fallback.minimapInteractionMode);
   assert.equal(normalized.shortcutHintsPlacement, fallback.shortcutHintsPlacement);
   assert.equal(normalized.canvasControlsPlacement, fallback.canvasControlsPlacement);
   assert.deepEqual(normalized.shortcuts, fallback.shortcuts);
@@ -304,7 +308,7 @@ test("the Qwen migration does not rerun the older expanded-limit migration", asy
     assert.deepEqual(loaded.homeLimitProviders, ["codex", "claude", "kimi"]);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 10);
+    assert.equal(persisted.settingsVersion, 11);
     assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, ["codex", "claude", "kimi"]);
   } finally {
@@ -327,7 +331,7 @@ test("the limit-display migration preserves a version-three launcher subset", as
     assert.deepEqual(loaded.homeLimitProviders, fallback.homeLimitProviders);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 10);
+    assert.equal(persisted.settingsVersion, 11);
     assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, fallback.homeLimitProviders);
   } finally {
@@ -347,7 +351,7 @@ test("the expanded limit migration preserves a curated version-four subset", asy
     assert.deepEqual(loaded.homeLimitProviders, ["kimi"]);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 10);
+    assert.equal(persisted.settingsVersion, 11);
     assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, ["kimi"]);
   } finally {
@@ -402,6 +406,7 @@ test("fresh installs default to scroll pan and key-gated widget wheel input", as
     assert.equal(store.get().hoverFocusSpeed, "normal");
     assert.equal(store.get().showShortcutHints, true);
     assert.equal(store.get().minimapPlacement, "top-right");
+    assert.equal(store.get().minimapInteractionMode, "click");
     assert.equal(store.get().shortcutHintsPlacement, "bottom-right");
     assert.equal(store.get().canvasControlsPlacement, "bottom-left");
     assert.equal(store.get().homeAccentPreset, "classic");
@@ -438,6 +443,29 @@ test("fresh wheel capture binding follows the host platform", async () => {
       rm(macDir, { recursive: true, force: true }),
       rm(otherDir, { recursive: true, force: true })
     ]);
+  }
+});
+
+test("existing profiles migrate minimap interaction to click and persist later changes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "canvastty-settings-minimap-interaction-"));
+  try {
+    const legacy = { ...fallback, settingsVersion: 10 };
+    delete legacy.minimapInteractionMode;
+    await writeFile(join(dir, "settings.json"), JSON.stringify(legacy));
+
+    const store = new SettingsStore(dir, "en");
+    assert.equal((await store.load()).minimapInteractionMode, "click");
+    let persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
+    assert.equal(persisted.settingsVersion, 11);
+    assert.equal(persisted.minimapInteractionMode, "click");
+
+    await store.update({ minimapInteractionMode: "drag" });
+    const reloaded = new SettingsStore(dir, "en");
+    assert.equal((await reloaded.load()).minimapInteractionMode, "drag");
+    persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
+    assert.equal(persisted.minimapInteractionMode, "drag");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -672,6 +700,12 @@ test("normalizes canvas overlay positions independently", () => {
   assert.equal(invalid.minimapPlacement, fallback.minimapPlacement);
   assert.equal(invalid.shortcutHintsPlacement, fallback.shortcutHintsPlacement);
   assert.equal(invalid.canvasControlsPlacement, fallback.canvasControlsPlacement);
+});
+
+test("normalizes minimap interaction independently", () => {
+  assert.equal(normalizeSettings({ minimapInteractionMode: "drag" }, fallback).minimapInteractionMode, "drag");
+  assert.equal(normalizeSettings({ minimapInteractionMode: "click" }, fallback).minimapInteractionMode, "click");
+  assert.equal(normalizeSettings({ minimapInteractionMode: "pan" }, fallback).minimapInteractionMode, "click");
 });
 
 test("conflicting or malformed shortcuts fall back together", () => {

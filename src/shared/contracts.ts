@@ -15,6 +15,7 @@ export type ZoomSensitivity = "slow" | "normal" | "fast";
 export type CanvasWheelCaptureMode = "off" | "always" | "key";
 export type CanvasNavigationMouseButton = "Mouse3" | "Mouse4" | "Mouse5";
 export type CanvasOverlayPlacement = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+export type MinimapInteractionMode = "click" | "drag";
 export type BrowserViewportSurface = "native" | "placeholder" | "hidden";
 export type FocusActivation = "off" | "single" | "double";
 export type ShortcutAction = "home" | "renameWindow";
@@ -137,6 +138,7 @@ export interface AppSettings {
   hoverFocusSpeed: EdgePanSpeed;
   showShortcutHints: boolean;
   minimapPlacement: CanvasOverlayPlacement;
+  minimapInteractionMode: MinimapInteractionMode;
   shortcutHintsPlacement: CanvasOverlayPlacement;
   canvasControlsPlacement: CanvasOverlayPlacement;
   shortcuts: ShortcutBindings;

@@ -4,6 +4,7 @@ import {
   MINIMAP_SURFACE_SIZE,
   MINIMAP_VIEWPORT_MARKER_SIZE,
   cameraWorldViewport,
+  minimapCameraForPointerDrag,
   minimapAreaForBounds,
   minimapEdgePointForBounds,
   minimapPointForBounds,
@@ -82,4 +83,24 @@ test("HOME and windows are allowed to leave instead of sticking to a clamped edg
 
   assert.equal(point.x < 0, true);
   assert.equal(minimapAreaForBounds(home, world), null);
+});
+
+test("pointer movement changes the camera only in minimap drag mode", () => {
+  const camera = { x: 100, y: 200, zoom: 0.5 };
+  const pointerDelta = { x: 17.2, y: 10.4 };
+  const surfaceSize = { width: 172, height: 104 };
+  const worldBounds = {
+    position: { x: -500, y: -300 },
+    size: { width: 1_720, height: 1_040 }
+  };
+
+  assert.equal(
+    minimapCameraForPointerDrag("click", camera, pointerDelta, surfaceSize, worldBounds),
+    null
+  );
+  const dragged = minimapCameraForPointerDrag("drag", camera, pointerDelta, surfaceSize, worldBounds);
+  assert.ok(dragged);
+  assert.equal(Math.abs(dragged.x - 14) < 1e-9, true);
+  assert.equal(Math.abs(dragged.y - 148) < 1e-9, true);
+  assert.equal(dragged.zoom, 0.5);
 });

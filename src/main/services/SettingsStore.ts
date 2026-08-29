@@ -19,6 +19,7 @@ import type {
   LimitProviderId,
   LocaleId,
   MediaFit,
+  MinimapInteractionMode,
   PaletteId,
   PluginCanvasInstance,
   SessionRowColorMode,
@@ -48,7 +49,7 @@ const SESSION_ROW_COLOR_MODES = new Set<SessionRowColorMode>(["monochrome", "sta
 const CANVAS_COLORS = new Set<CanvasColorId>(["sage", "lilac", "night", "sand", "mist", "rose", "slate"]);
 const PATTERNS = new Set<CanvasPatternId>(["dots", "grid", "waves", "diagonal", "rings", "none"]);
 const MEDIA_FITS = new Set<MediaFit>(["cover", "contain"]);
-const SETTINGS_VERSION = 10;
+const SETTINGS_VERSION = 11;
 const GROK_LAUNCHER_SETTINGS_VERSION = 3;
 const EXPANDED_LIMIT_SETTINGS_VERSION = 5;
 const QWEN_SETTINGS_VERSION = 6;
@@ -69,6 +70,7 @@ const CANVAS_OVERLAY_PLACEMENTS = new Set<CanvasOverlayPlacement>([
   "bottom-left",
   "bottom-right"
 ]);
+const MINIMAP_INTERACTION_MODES = new Set<MinimapInteractionMode>(["click", "drag"]);
 const SHORTCUT_MODIFIERS = new Set(["Ctrl", "Alt", "Shift", "Meta"]);
 const DEFAULT_SHORTCUTS: ShortcutBindings = { home: "Home", renameWindow: "F2" };
 
@@ -122,6 +124,7 @@ export class SettingsStore {
         || !("agentLifecycleHooksEnabled" in source)
         || !("canvasColor" in source)
         || !("minimapPlacement" in source)
+        || !("minimapInteractionMode" in source)
         || !("shortcutHintsPlacement" in source)
         || !("canvasControlsPlacement" in source)
         || !("restoreTerminalSessions" in source)
@@ -235,6 +238,7 @@ function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform
     hoverFocusSpeed: "normal",
     showShortcutHints: true,
     minimapPlacement: "top-right",
+    minimapInteractionMode: "click",
     shortcutHintsPlacement: "bottom-right",
     canvasControlsPlacement: "bottom-left",
     shortcuts: { ...DEFAULT_SHORTCUTS },
@@ -367,6 +371,11 @@ export function normalizeSettings(
       ? source.showShortcutHints
       : fallback.showShortcutHints,
     minimapPlacement: normalizeCanvasOverlayPlacement(source.minimapPlacement, fallback.minimapPlacement),
+    minimapInteractionMode: MINIMAP_INTERACTION_MODES.has(
+      source.minimapInteractionMode as MinimapInteractionMode
+    )
+      ? source.minimapInteractionMode as MinimapInteractionMode
+      : fallback.minimapInteractionMode,
     shortcutHintsPlacement: normalizeCanvasOverlayPlacement(
       source.shortcutHintsPlacement,
       fallback.shortcutHintsPlacement
