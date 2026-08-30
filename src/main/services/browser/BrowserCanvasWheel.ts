@@ -85,13 +85,23 @@ export class BrowserPageWheelSequence {
 export function browserCanvasNavigationPointerType(
   input: { type: string; button?: string },
   canvasOverrideActive: boolean,
-  gestureOwnedByCanvas: boolean
+  gestureOwnedByCanvas: boolean,
+  options: {
+    mouseBindingActive?: boolean;
+    activeButton?: string | null;
+  } = {}
 ): BrowserCanvasNavigationPointerType | null {
   if (!gestureOwnedByCanvas) {
-    return input.type === "mouseDown" && input.button === "left" && canvasOverrideActive ? "down" : null;
+    const startsCanvasGesture = input.type === "mouseDown" && (
+      input.button === "middle"
+      || (input.button === "left" && canvasOverrideActive)
+      || options.mouseBindingActive === true
+    );
+    return startsCanvasGesture ? "down" : null;
   }
   if (input.type === "mouseEnter" || input.type === "mouseMove") return "move";
-  if (input.type === "mouseUp" && input.button === "left") return "up";
+  const activeButton = options.activeButton === undefined ? "left" : options.activeButton;
+  if (input.type === "mouseUp" && (activeButton === null || input.button === activeButton)) return "up";
   return null;
 }
 

@@ -5,7 +5,10 @@ import type {
   AgentProviderId,
   AppSettings,
   BrowserCanvasState,
+  CanvasLauncherItemId,
+  CanvasRegion,
   CanvasColorId,
+  CanvasOverlayPlacement,
   CanvasWheelCaptureMode,
   CanvasPatternId,
   EdgePanSpeed,
@@ -17,23 +20,33 @@ import type {
   LimitProviderId,
   LocaleId,
   MediaFit,
+  MinimapInteractionMode,
   PaletteId,
   PluginCanvasInstance,
   RadialLauncherItemId,
+  SessionRowColorMode,
   ShortcutBindings,
   StickyNote,
   ZoomSensitivity
 } from "../../shared/contracts";
 import {
+  CANVAS_LAUNCHER_ITEMS,
+  DEFAULT_CANVAS_LAUNCHER_ITEMS,
   DEFAULT_HOME_ACCENT_COLORS,
   DEFAULT_HOME_GRID_SIZE,
   DEFAULT_HOME_LAYOUT,
   DEFAULT_RADIAL_LAUNCHER_ITEMS,
+  DEFAULT_UI_SCALE,
   HOME_GRID_MAX_COLUMNS,
   HOME_GRID_MAX_ROWS,
   HOME_GRID_MIN_COLUMNS,
   HOME_GRID_MIN_ROWS,
-  RADIAL_LAUNCHER_ITEMS
+  RADIAL_LAUNCHER_ITEMS,
+  STICKY_NOTE_MAX_SIZE,
+  STICKY_NOTE_MIN_SIZE,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
+  UI_SCALE_STEP
 } from "../../shared/contracts.ts";
 import {
   canvasNavigationPlatform,
@@ -45,10 +58,11 @@ import {
 const LOCALES = new Set<LocaleId>(["ru", "en"]);
 const PALETTES = new Set<PaletteId>(["sage", "lilac", "night"]);
 const HOME_ACCENT_PRESETS = new Set<HomeAccentPresetId>(["classic", "warm", "cool", "mono", "custom"]);
+const SESSION_ROW_COLOR_MODES = new Set<SessionRowColorMode>(["monochrome", "status"]);
 const CANVAS_COLORS = new Set<CanvasColorId>(["sage", "lilac", "night", "sand", "mist", "rose", "slate"]);
 const PATTERNS = new Set<CanvasPatternId>(["dots", "grid", "waves", "diagonal", "rings", "none"]);
 const MEDIA_FITS = new Set<MediaFit>(["cover", "contain"]);
-const SETTINGS_VERSION = 6;
+const SETTINGS_VERSION = 13;
 const GROK_LAUNCHER_SETTINGS_VERSION = 3;
 const EXPANDED_LIMIT_SETTINGS_VERSION = 5;
 const QWEN_SETTINGS_VERSION = 6;
@@ -59,12 +73,20 @@ const LEGACY_LIMIT_PROVIDERS: LimitProviderId[] = ["codex", "claude", "kimi"];
 const PRE_QWEN_LIMIT_PROVIDERS: LimitProviderId[] = [...LEGACY_LIMIT_PROVIDERS, "opencode", "grok"];
 const LIMIT_PROVIDERS: LimitProviderId[] = ["codex", "claude", "qwen", "kimi", "opencode", "grok"];
 const LIMIT_PROVIDER_SET = new Set<LimitProviderId>(LIMIT_PROVIDERS);
+const CANVAS_LAUNCHER_ITEM_SET = new Set<CanvasLauncherItemId>(CANVAS_LAUNCHER_ITEMS);
+const RADIAL_LAUNCHER_ITEM_SET = new Set<RadialLauncherItemId>(RADIAL_LAUNCHER_ITEMS);
 const EDGE_PAN_SPEEDS = new Set<EdgePanSpeed>(["slow", "normal", "fast"]);
 const ZOOM_SENSITIVITIES = new Set<ZoomSensitivity>(["slow", "normal", "fast"]);
 const FOCUS_ACTIVATIONS = new Set<FocusActivation>(["off", "single", "double"]);
 const CANVAS_WHEEL_CAPTURE_MODES = new Set<CanvasWheelCaptureMode>(["off", "always", "key"]);
+const CANVAS_OVERLAY_PLACEMENTS = new Set<CanvasOverlayPlacement>([
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right"
+]);
+const MINIMAP_INTERACTION_MODES = new Set<MinimapInteractionMode>(["click", "drag"]);
 const SHORTCUT_MODIFIERS = new Set(["Ctrl", "Alt", "Shift", "Meta"]);
-const RADIAL_LAUNCHER_ITEM_SET = new Set<RadialLauncherItemId>(RADIAL_LAUNCHER_ITEMS);
 const DEFAULT_SHORTCUTS: ShortcutBindings = { home: "Home", renameWindow: "F2" };
 
 export class SettingsStore {
@@ -111,11 +133,23 @@ export class SettingsStore {
         || !("canvasWheelCaptureMode" in source)
         || !("homeAccentPreset" in source)
         || !("homeAccentColors" in source)
+        || !("sessionRowColorMode" in source)
         || !("homeLauncherProviders" in source)
         || !("homeLimitProviders" in source)
-        || !("stickyNotes" in source)
+        || !("canvasLauncherItems" in source)
         || !("radialLauncherItems" in source)
+        || !("agentLifecycleHooksEnabled" in source)
+        || !("uiScale" in source)
         || !("canvasColor" in source)
+        || !("minimapPlacement" in source)
+        || !("minimapInteractionMode" in source)
+        || !("shortcutHintsPlacement" in source)
+        || !("canvasControlsPlacement" in source)
+        || !("restoreTerminalSessions" in source)
+        || !("persistCanvasRegions" in source)
+        || !("persistStickyNotes" in source)
+        || !("canvasRegions" in source)
+        || !("stickyNotes" in source)
         || source.canvasColor === "palette"
         || source.settingsVersion !== SETTINGS_VERSION;
       let migratedCandidate: Record<string, unknown> = source;
@@ -135,6 +169,8 @@ export class SettingsStore {
         ...this.value,
         useScrollWheelToZoom: true
       }, this.platform);
+      if (!this.value.persistCanvasRegions) this.value.canvasRegions = [];
+      if (!this.value.persistStickyNotes) this.value.stickyNotes = [];
       if (needsMigration) await this.persist();
     } catch (error) {
       if (isMissingFile(error)) {
@@ -167,7 +203,12 @@ export class SettingsStore {
     const persistedValue: Partial<AppSettings> & {
       settingsVersion: number;
       zoomOverApplications?: boolean;
-    } = { ...this.value, settingsVersion: SETTINGS_VERSION };
+    } = {
+      ...this.value,
+      canvasRegions: this.value.persistCanvasRegions ? this.value.canvasRegions : [],
+      stickyNotes: this.value.persistStickyNotes ? this.value.stickyNotes : [],
+      settingsVersion: SETTINGS_VERSION
+    };
     if (this.hasPersistedLegacyWheelCapture) {
       persistedValue.zoomOverApplications = this.value.canvasWheelCaptureMode === "always";
     }
@@ -200,12 +241,19 @@ function isPreQwenDefaultSelection<T extends string>(candidate: unknown[] | null
 function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform): AppSettings {
   return {
     locale: systemLocale.toLowerCase().startsWith("ru") ? "ru" : "en",
+    restoreTerminalSessions: false,
+    persistCanvasRegions: true,
+    persistStickyNotes: true,
     palette: "sage",
     homeAccentPreset: "classic",
     homeAccentColors: { ...DEFAULT_HOME_ACCENT_COLORS },
+    sessionRowColorMode: "status",
     homeLauncherProviders: [...AGENT_PROVIDERS],
     homeLimitProviders: [...LIMIT_PROVIDERS],
+    canvasLauncherItems: [...DEFAULT_CANVAS_LAUNCHER_ITEMS],
     radialLauncherItems: [...DEFAULT_RADIAL_LAUNCHER_ITEMS],
+    agentLifecycleHooksEnabled: true,
+    uiScale: DEFAULT_UI_SCALE,
     canvasColor: "sage",
     pattern: "dots",
     snapToGrid: true,
@@ -222,6 +270,10 @@ function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform
     hoverFocus: false,
     hoverFocusSpeed: "normal",
     showShortcutHints: true,
+    minimapPlacement: "top-right",
+    minimapInteractionMode: "click",
+    shortcutHintsPlacement: "bottom-right",
+    canvasControlsPlacement: "bottom-left",
     shortcuts: { ...DEFAULT_SHORTCUTS },
     mediaPath: null,
     mediaFit: "cover",
@@ -229,8 +281,9 @@ function createDefaults(systemLocale: string, platform: CanvasNavigationPlatform
     acknowledgedDangerousProfiles: [],
     homeGridSize: { ...DEFAULT_HOME_GRID_SIZE },
     homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
-    pluginCanvas: [],
+    canvasRegions: [],
     stickyNotes: [],
+    pluginCanvas: [],
     browserCanvas: null,
     browserAgentAccess: true,
     browserShowAgentPresence: true,
@@ -277,6 +330,7 @@ export function normalizeSettings(
     homeGridSize
   );
   const pluginCanvas = normalizePluginCanvas(source.pluginCanvas, fallback.pluginCanvas ?? []);
+  const canvasRegions = normalizeCanvasRegions(source.canvasRegions, fallback.canvasRegions ?? []);
   const stickyNotes = normalizeStickyNotes(source.stickyNotes, fallback.stickyNotes ?? []);
   const browserCanvas = normalizeBrowserCanvas(source.browserCanvas, fallback.browserCanvas ?? null);
   const homeAccentColors = normalizeHomeAccentColors(
@@ -291,9 +345,13 @@ export function normalizeSettings(
     source.homeLimitProviders,
     fallback.homeLimitProviders ?? LIMIT_PROVIDERS
   );
+  const canvasLauncherItems = normalizeCanvasLauncherItems(
+    source.canvasLauncherItems,
+    fallback.canvasLauncherItems ?? DEFAULT_CANVAS_LAUNCHER_ITEMS
+  );
   const radialLauncherItems = normalizeRadialLauncherItems(
     source.radialLauncherItems,
-    fallback.radialLauncherItems ?? [...DEFAULT_RADIAL_LAUNCHER_ITEMS]
+    fallback.radialLauncherItems ?? DEFAULT_RADIAL_LAUNCHER_ITEMS
   );
   const palette = PALETTES.has(source.palette as PaletteId) ? source.palette as PaletteId : fallback.palette;
   const canvasColorCandidate = (source as Record<string, unknown>).canvasColor;
@@ -305,14 +363,31 @@ export function normalizeSettings(
 
   return {
     locale: LOCALES.has(source.locale as LocaleId) ? source.locale as LocaleId : fallback.locale,
+    restoreTerminalSessions: typeof source.restoreTerminalSessions === "boolean"
+      ? source.restoreTerminalSessions
+      : fallback.restoreTerminalSessions ?? false,
+    persistCanvasRegions: typeof source.persistCanvasRegions === "boolean"
+      ? source.persistCanvasRegions
+      : fallback.persistCanvasRegions ?? true,
+    persistStickyNotes: typeof source.persistStickyNotes === "boolean"
+      ? source.persistStickyNotes
+      : fallback.persistStickyNotes ?? true,
     palette,
     homeAccentPreset: HOME_ACCENT_PRESETS.has(source.homeAccentPreset as HomeAccentPresetId)
       ? source.homeAccentPreset as HomeAccentPresetId
       : fallback.homeAccentPreset,
     homeAccentColors,
+    sessionRowColorMode: SESSION_ROW_COLOR_MODES.has(source.sessionRowColorMode as SessionRowColorMode)
+      ? source.sessionRowColorMode as SessionRowColorMode
+      : fallback.sessionRowColorMode ?? "status",
     homeLauncherProviders,
     homeLimitProviders,
+    canvasLauncherItems,
     radialLauncherItems,
+    agentLifecycleHooksEnabled: typeof source.agentLifecycleHooksEnabled === "boolean"
+      ? source.agentLifecycleHooksEnabled
+      : fallback.agentLifecycleHooksEnabled,
+    uiScale: normalizeUiScale(source.uiScale, fallback.uiScale ?? DEFAULT_UI_SCALE),
     canvasColor,
     pattern: PATTERNS.has(source.pattern as CanvasPatternId)
       ? source.pattern as CanvasPatternId
@@ -347,6 +422,20 @@ export function normalizeSettings(
     showShortcutHints: typeof source.showShortcutHints === "boolean"
       ? source.showShortcutHints
       : fallback.showShortcutHints,
+    minimapPlacement: normalizeCanvasOverlayPlacement(source.minimapPlacement, fallback.minimapPlacement),
+    minimapInteractionMode: MINIMAP_INTERACTION_MODES.has(
+      source.minimapInteractionMode as MinimapInteractionMode
+    )
+      ? source.minimapInteractionMode as MinimapInteractionMode
+      : fallback.minimapInteractionMode,
+    shortcutHintsPlacement: normalizeCanvasOverlayPlacement(
+      source.shortcutHintsPlacement,
+      fallback.shortcutHintsPlacement
+    ),
+    canvasControlsPlacement: normalizeCanvasOverlayPlacement(
+      source.canvasControlsPlacement,
+      fallback.canvasControlsPlacement
+    ),
     shortcuts,
     mediaPath,
     mediaFit: MEDIA_FITS.has(source.mediaFit as MediaFit) ? source.mediaFit as MediaFit : fallback.mediaFit,
@@ -356,8 +445,9 @@ export function normalizeSettings(
     acknowledgedDangerousProfiles: [...new Set(acknowledged)],
     homeGridSize,
     homeLayout,
-    pluginCanvas,
+    canvasRegions,
     stickyNotes,
+    pluginCanvas,
     browserCanvas,
     browserAgentAccess: typeof source.browserAgentAccess === "boolean"
       ? source.browserAgentAccess
@@ -369,6 +459,19 @@ export function normalizeSettings(
       ? source.browserRestoreTabs
       : fallback.browserRestoreTabs
   };
+}
+
+export function normalizeCanvasLauncherItems(
+  candidate: unknown,
+  fallback: readonly CanvasLauncherItemId[] = DEFAULT_CANVAS_LAUNCHER_ITEMS
+): CanvasLauncherItemId[] {
+  if (!Array.isArray(candidate)) return [...fallback];
+  const result: CanvasLauncherItemId[] = [];
+  for (const item of candidate) {
+    if (typeof item !== "string" || !CANVAS_LAUNCHER_ITEM_SET.has(item as CanvasLauncherItemId)) continue;
+    if (!result.includes(item as CanvasLauncherItemId)) result.push(item as CanvasLauncherItemId);
+  }
+  return result.length > 0 ? result : [...fallback];
 }
 
 export function normalizeRadialLauncherItems(
@@ -383,6 +486,21 @@ export function normalizeRadialLauncherItems(
     if (result.length === 8) break;
   }
   return result.length > 0 ? result : [...fallback];
+}
+
+export function normalizeUiScale(candidate: unknown, fallback = DEFAULT_UI_SCALE): number {
+  if (typeof candidate !== "number" || !Number.isFinite(candidate)) return fallback;
+  const stepped = Math.round(candidate / UI_SCALE_STEP) * UI_SCALE_STEP;
+  return Number(Math.min(UI_SCALE_MAX, Math.max(UI_SCALE_MIN, stepped)).toFixed(2));
+}
+
+function normalizeCanvasOverlayPlacement(
+  candidate: unknown,
+  fallback: CanvasOverlayPlacement
+): CanvasOverlayPlacement {
+  return CANVAS_OVERLAY_PLACEMENTS.has(candidate as CanvasOverlayPlacement)
+    ? candidate as CanvasOverlayPlacement
+    : fallback;
 }
 
 function normalizeHomeAccentColors(candidate: unknown, fallback: HomeAccentColors): HomeAccentColors {
@@ -549,12 +667,47 @@ function normalizePluginCanvas(candidate: unknown, fallback: readonly PluginCanv
   return instances;
 }
 
-function normalizeStickyNotes(candidate: unknown, fallback: readonly StickyNote[]): StickyNote[] {
+export function normalizeCanvasRegions(
+  candidate: unknown,
+  fallback: readonly CanvasRegion[] = []
+): CanvasRegion[] {
+  if (!Array.isArray(candidate)) return fallback.map((region) => structuredClone(region));
+
+  const regions: CanvasRegion[] = [];
+  const ids = new Set<string>();
+  for (const value of candidate.slice(0, 32)) {
+    if (!value || typeof value !== "object") continue;
+    const source = value as Partial<CanvasRegion>;
+    if (!isInstanceId(source.id) || ids.has(source.id)) continue;
+    if (typeof source.title !== "string" || source.title.trim().length === 0) continue;
+    if (!isFinitePoint(source.position) || !isFiniteSize(source.size)) continue;
+    if (typeof source.color !== "string" || !/^#[0-9A-F]{6}$/i.test(source.color)) continue;
+    regions.push({
+      id: source.id,
+      title: source.title.trim().slice(0, 80),
+      color: source.color.toUpperCase(),
+      position: { x: source.position.x, y: source.position.y },
+      size: {
+        width: clamp(source.size.width, 360, 4_000),
+        height: clamp(source.size.height, 240, 3_000)
+      }
+    });
+    ids.add(source.id);
+  }
+  return regions;
+}
+
+// Adapted from @TroopJostle's sticky-note persistence work in PR #23.
+export function normalizeStickyNotes(
+  candidate: unknown,
+  fallback: readonly StickyNote[] = []
+): StickyNote[] {
   if (!Array.isArray(candidate)) return fallback.map((note) => structuredClone(note));
 
   const notes: StickyNote[] = [];
   const ids = new Set<string>();
-  for (const value of candidate.slice(0, 128)) {
+  for (const value of candidate) {
+    if (notes.length >= 128) break;
     if (!value || typeof value !== "object") continue;
     const source = value as Partial<StickyNote>;
     if (!isInstanceId(source.id) || ids.has(source.id)) continue;
@@ -564,8 +717,8 @@ function normalizeStickyNotes(candidate: unknown, fallback: readonly StickyNote[
       text: source.text.slice(0, 20_000),
       position: { x: source.position.x, y: source.position.y },
       size: {
-        width: clamp(source.size.width, 180, 1_000),
-        height: clamp(source.size.height, 140, 800)
+        width: clamp(source.size.width, STICKY_NOTE_MIN_SIZE.width, STICKY_NOTE_MAX_SIZE.width),
+        height: clamp(source.size.height, STICKY_NOTE_MIN_SIZE.height, STICKY_NOTE_MAX_SIZE.height)
       }
     });
     ids.add(source.id);
@@ -612,6 +765,7 @@ function isValidShortcut(value: unknown): value is string {
   if (!key || parts.slice(0, -1).some((part) => !SHORTCUT_MODIFIERS.has(part))) return false;
   return /^[A-Z0-9]$/i.test(key)
     || /^F(?:[1-9]|1\d|2[0-4])$/.test(key)
+    || /^Mouse[345]$/.test(key)
     || new Set([
       "Home", "End", "PageUp", "PageDown", "Space", "Enter", "Escape", "Tab",
       "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Insert", "Backspace"

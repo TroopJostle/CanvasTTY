@@ -13,7 +13,25 @@ test("main process acquires the single-instance lock before readiness", async ()
   assert.notEqual(lock, -1);
   assert.notEqual(ready, -1);
   assert.ok(lock < ready);
-  assert.match(source, /app\.on\("second-instance", focusMainWindow\)/);
+  assert.doesNotMatch(source, /app\.on\("second-instance"/);
+  assert.doesNotMatch(source, /focusMainWindow/);
+});
+
+test("background plugin requests never activate the desktop window", async () => {
+  const source = await readFile(mainPath, "utf8");
+  const launcher = source.slice(
+    source.indexOf("function requestPluginLauncher"),
+    source.indexOf("function requestPluginCanvas")
+  );
+  const canvas = source.slice(
+    source.indexOf("function requestPluginCanvas"),
+    source.indexOf("function broadcastPluginStorageChange")
+  );
+
+  for (const route of [launcher, canvas]) {
+    assert.match(route, /webContents\.send/);
+    assert.doesNotMatch(route, /\.focus\(\)|\.show\(\)|\.restore\(\)/);
+  }
 });
 
 test("startup window is visible immediately and failures remain visible", async () => {

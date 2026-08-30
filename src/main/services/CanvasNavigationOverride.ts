@@ -1,9 +1,16 @@
 import type { Event, Input, WebContents } from "electron";
+import type {
+  CanvasNavigationMouseButton,
+  CanvasNavigationPointerBindingInput
+} from "../../shared/contracts.ts";
 import {
+  canvasNavigationMouseButtonFromElectronButton,
   canvasNavigationModifierFromKey,
   isCanvasNavigationModifierActive,
   isCanvasNavigationBindingActive,
   isCanvasNavigationBindingKey,
+  isCanvasNavigationBindingMouseButton,
+  isCanvasNavigationMouseButton,
   normalizeCanvasNavigationInputKey,
   parseCanvasNavigationBinding
 } from "../../shared/canvasNavigation.ts";
@@ -34,6 +41,10 @@ export interface CanvasNavigationOverrideState {
   navigationActive: boolean;
 }
 
+export interface CanvasNavigationInputAttachmentOptions {
+  preventMouseBindings?: boolean;
+}
+
 export function shouldPreventCanvasNavigationInput(
   input: Pick<CanvasNavigationKeyboardInput, "key">,
   transition: CanvasNavigationOverrideTransition
@@ -46,6 +57,7 @@ export class CanvasNavigationOverrideTracker {
   private suspended = false;
   private isActive = false;
   private readonly pressedKeys = new Set<string>();
+  private readonly pressedMouseButtons = new Set<CanvasNavigationMouseButton>();
   private modifiers = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
 
   constructor(binding: string | null) {
@@ -61,6 +73,7 @@ export class CanvasNavigationOverrideTracker {
     if (!parsed || !parsed.modifiers.every((modifier) => isCanvasNavigationModifierActive(this.modifiers, modifier))) {
       return false;
     }
+    if (parsed.key !== null && isCanvasNavigationMouseButton(parsed.key)) return false;
     return parsed.key !== null || parsed.modifiers.includes("Alt");
   }
 
@@ -98,7 +111,8 @@ export class CanvasNavigationOverrideTracker {
         const alreadyOwned = this.pressedKeys.has(key);
         const completesBinding = isCanvasNavigationBindingActive({
           ...this.modifiers,
-          pressedKeys: new Set([key])
+          pressedKeys: new Set([key]),
+          pressedMouseButtons: this.pressedMouseButtons
         }, this.binding);
         if (alreadyOwned || completesBinding) {
           this.pressedKeys.add(key);
@@ -110,13 +124,58 @@ export class CanvasNavigationOverrideTracker {
     }
     this.isActive = isCanvasNavigationBindingActive({
       ...this.modifiers,
-      pressedKeys: this.pressedKeys
+      pressedKeys: this.pressedKeys,
+      pressedMouseButtons: this.pressedMouseButtons
     }, this.binding);
     return {
       active: this.isActive,
       changed: previous !== this.isActive,
       reserved
     };
+  }
+
+  updatePointer(input: CanvasNavigationPointerBindingInput): CanvasNavigationOverrideTransition {
+    if (this.suspended) return { active: false, changed: false, reserved: false };
+    const previous = this.isActive;
+    this.modifiers = {
+      altKey: input.altKey,
+      ctrlKey: input.ctrlKey,
+      metaKey: input.metaKey,
+      shiftKey: input.shiftKey
+    };
+    let reserved = false;
+    if (isCanvasNavigationBindingMouseButton(input.button, this.binding)) {
+      if (input.pressed) {
+        const alreadyOwned = this.pressedMouseButtons.has(input.button);
+        const completesBinding = isCanvasNavigationBindingActive({
+          ...this.modifiers,
+          pressedKeys: this.pressedKeys,
+          pressedMouseButtons: new Set([input.button])
+        }, this.binding);
+        if (alreadyOwned || completesBinding) {
+          this.pressedMouseButtons.add(input.button);
+          reserved = true;
+        }
+      } else {
+        reserved = this.pressedMouseButtons.delete(input.button);
+      }
+    }
+    this.isActive = isCanvasNavigationBindingActive({
+      ...this.modifiers,
+      pressedKeys: this.pressedKeys,
+      pressedMouseButtons: this.pressedMouseButtons
+    }, this.binding);
+    return {
+      active: this.isActive,
+      changed: previous !== this.isActive,
+      reserved
+    };
+  }
+
+  ownsMouseButton(button: CanvasNavigationMouseButton): boolean {
+    return this.isActive
+      && this.pressedMouseButtons.has(button)
+      && isCanvasNavigationBindingMouseButton(button, this.binding);
   }
 
   reset(): CanvasNavigationOverrideTransition {
@@ -127,6 +186,7 @@ export class CanvasNavigationOverrideTracker {
     const changed = this.isActive;
     this.isActive = false;
     this.pressedKeys.clear();
+    this.pressedMouseButtons.clear();
     this.modifiers = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
     return { active: false, changed, reserved: false };
   }
@@ -157,10 +217,14 @@ export class CanvasNavigationInputController {
     return this.wheelTracker.active;
   }
 
-  attach(contents: WebContents): void {
+  attach(contents: WebContents, options: CanvasNavigationInputAttachmentOptions = {}): void {
     if (this.attachedContents.has(contents)) return;
     this.attachedContents.add(contents);
     contents.on("before-input-event", (event, input) => this.handleInput(contents, event, input));
+    contents.on("before-mouse-event", (event, input) => {
+      const transition = this.handleMouseInput(input);
+      if (options.preventMouseBindings !== false && transition.reserved) event.preventDefault();
+    });
     contents.once("destroyed", () => {
       this.attachedContents.delete(contents);
       if (this.menuShortcutContents === contents) this.menuShortcutContents = null;
@@ -189,6 +253,31 @@ export class CanvasNavigationInputController {
     this.resetTrackers();
   }
 
+  updatePointerBinding(input: CanvasNavigationPointerBindingInput): CanvasNavigationOverrideTransition {
+    const previous = this.state();
+    const wheelTransition = this.wheelTracker.updatePointer(input);
+    const navigationTransition = this.navigationTracker.updatePointer(input);
+    this.emitIfChanged(previous);
+    return {
+      active: wheelTransition.active || navigationTransition.active,
+      changed: wheelTransition.changed || navigationTransition.changed,
+      reserved: wheelTransition.reserved || navigationTransition.reserved
+    };
+  }
+
+  ownsNavigationMouseButton(button: string | undefined): boolean {
+    const normalized = canvasNavigationMouseButtonFromElectronButton(button);
+    return normalized !== null && this.navigationTracker.ownsMouseButton(normalized);
+  }
+
+  ownsAnyMouseButton(button: string | undefined): boolean {
+    const normalized = canvasNavigationMouseButtonFromElectronButton(button);
+    return normalized !== null && (
+      this.wheelTracker.ownsMouseButton(normalized)
+      || this.navigationTracker.ownsMouseButton(normalized)
+    );
+  }
+
   private handleInput(contents: WebContents, event: Event, input: Input): void {
     if (input.type !== "keyDown" && input.type !== "keyUp") return;
     const keyboardInput = {
@@ -213,6 +302,25 @@ export class CanvasNavigationInputController {
     });
     if (shouldPrevent) event.preventDefault();
     this.emitIfChanged(previous);
+  }
+
+  private handleMouseInput(input: Electron.MouseInputEvent): CanvasNavigationOverrideTransition {
+    if (input.type !== "mouseDown" && input.type !== "mouseUp") {
+      return { active: this.active || this.wheelActive, changed: false, reserved: false };
+    }
+    const button = canvasNavigationMouseButtonFromElectronButton(input.button as string | undefined);
+    if (button === null) {
+      return { active: this.active || this.wheelActive, changed: false, reserved: false };
+    }
+    const modifiers = new Set(input.modifiers ?? []);
+    return this.updatePointerBinding({
+      button,
+      pressed: input.type === "mouseDown",
+      altKey: modifiers.has("alt"),
+      ctrlKey: modifiers.has("control") || modifiers.has("ctrl"),
+      metaKey: modifiers.has("meta") || modifiers.has("command") || modifiers.has("cmd"),
+      shiftKey: modifiers.has("shift")
+    });
   }
 
   private releaseMenuShortcuts(): void {

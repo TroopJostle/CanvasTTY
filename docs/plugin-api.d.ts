@@ -123,3 +123,15 @@ export type CanvasTTYPluginHermesHudSnapshot =
 export type CanvasTTYPluginLimitsResult =
   | { state: "loading"; snapshot: null }
   | { state: "ready"; snapshot: unknown };
+
+/** Stdin payload for an explicitly enabled native agent hook entry. */
+export interface CanvasTTYAgentHookInput {
+  apiVersion: 1;
+  pluginId: string;
+  hookId: string;
+  terminalSessionId: string;
+  provider: "codex" | "claude" | "qwen" | "kimi" | "opencode" | "hermes" | "grok";
+  event: "session-start" | "prompt-submit" | "permission-request" | "permission-result" | "after-tool" | "stop" | "session-end";
+  providerEvent: string;
+  payload: unknown;
+}

@@ -25,40 +25,50 @@ export interface AgentRuntimeLaunchCoordinator {
 
 export interface AgentRuntimeBridgeOptions extends ProviderRuntimeLaunchOptions {
   recoverOnStart?: boolean;
+  coreHooksEnabled?: boolean;
 }
 
 export class AgentRuntimeBridge implements AgentRuntimeLaunchCoordinator {
   private readonly gateway: RuntimeGateway;
   private readonly providers: ProviderRuntimeLaunchAdapters;
+  private readonly activeSessions = new Set<string>();
+  private coreHooksEnabled: boolean;
 
   constructor(gateway: RuntimeGateway, options: AgentRuntimeBridgeOptions) {
     this.gateway = gateway;
     this.providers = new ProviderRuntimeLaunchAdapters(options);
+    this.coreHooksEnabled = options.coreHooksEnabled !== false;
     if (options.recoverOnStart) this.providers.recoverConfigurations();
   }
 
   prepareLaunch(input: PrepareAgentRuntimeLaunchInput): PreparedAgentRuntimePtyLaunch {
-    const capability = this.gateway.registerSession(input.terminalSessionId, input.provider);
+    const capability = this.coreHooksEnabled
+      ? this.gateway.registerSession(input.terminalSessionId, input.provider)
+      : null;
     let prepared;
     try {
-      prepared = this.providers.prepare(input.provider, input.terminalSessionId);
+      prepared = this.providers.prepare(input.provider, input.terminalSessionId, this.coreHooksEnabled);
     } catch (error) {
-      this.gateway.revokeTerminalSession(input.terminalSessionId);
+      if (capability) this.gateway.revokeTerminalSession(input.terminalSessionId);
       throw error;
     }
+    this.activeSessions.add(input.terminalSessionId);
     let cleaned = false;
     return {
       args: prepared.args,
       environment: {
         ...prepared.environment,
-        [AGENT_RUNTIME_ENV.address]: capability.address,
-        [AGENT_RUNTIME_ENV.terminalSessionId]: capability.terminalSessionId,
-        [AGENT_RUNTIME_ENV.provider]: capability.provider,
-        [AGENT_RUNTIME_ENV.capabilityToken]: capability.capabilityToken
+        ...(capability ? {
+          [AGENT_RUNTIME_ENV.address]: capability.address,
+          [AGENT_RUNTIME_ENV.terminalSessionId]: capability.terminalSessionId,
+          [AGENT_RUNTIME_ENV.provider]: capability.provider,
+          [AGENT_RUNTIME_ENV.capabilityToken]: capability.capabilityToken
+        } : {})
       },
       cleanup: () => {
         if (cleaned) return;
         cleaned = true;
+        this.activeSessions.delete(input.terminalSessionId);
         try {
           prepared.releaseConfiguration();
         } finally {
@@ -69,6 +79,16 @@ export class AgentRuntimeBridge implements AgentRuntimeLaunchCoordinator {
   }
 
   currentStatus(terminalSessionId: string): RuntimeLifecycleState | null {
-    return this.gateway.currentStatus(terminalSessionId);
+    return this.coreHooksEnabled ? this.gateway.currentStatus(terminalSessionId) : null;
+  }
+
+  setCoreHooksEnabled(enabled: boolean): void {
+    const next = Boolean(enabled);
+    if (this.coreHooksEnabled === next) return;
+    this.coreHooksEnabled = next;
+    if (next) return;
+    for (const terminalSessionId of this.activeSessions) {
+      this.gateway.revokeTerminalSession(terminalSessionId);
+    }
   }
 }

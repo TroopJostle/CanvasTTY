@@ -17,8 +17,8 @@ interface RadialLauncherProps {
   items: RadialLauncherItemId[];
   locale: LocaleId;
   pointerId: number;
-  onActivate(item: RadialLauncherItemId): void;
-  onClose(): void;
+  onActivate(item: RadialLauncherItemId, fromPointerRelease?: boolean): void;
+  onClose(reason?: "release" | "cancel"): void;
 }
 
 const PROVIDER_IDS = new Set<ProviderId>([
@@ -53,17 +53,18 @@ export function RadialLauncher({
     const handleUp = (event: PointerEvent): void => {
       if (event.pointerId !== pointerId || event.button !== 2) return;
       const item = highlightedRef.current === null ? null : items[highlightedRef.current];
-      if (item) onActivate(item);
+      if (item) onActivate(item, true);
+      else onClose("release");
     };
     const handleDown = (event: PointerEvent): void => {
       if (event.button === 0 && !(event.target instanceof Element && event.target.closest(".radial-launcher"))) {
-        onClose();
+        onClose("cancel");
       }
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onClose("cancel");
         return;
       }
       if (event.key === "ArrowRight" || event.key === "ArrowDown") {

@@ -5,6 +5,7 @@ import type {
   BrowserCanvasState,
   BrowserSnapshot,
   CameraState,
+  CanvasRegion,
   GithubPluginSearchResult,
   HomeAccentColors,
   HomeGridSize,
@@ -28,7 +29,9 @@ import {
   DEFAULT_HOME_ACCENT_COLORS,
   DEFAULT_HOME_GRID_SIZE,
   DEFAULT_HOME_LAYOUT,
+  DEFAULT_CANVAS_LAUNCHER_ITEMS,
   DEFAULT_RADIAL_LAUNCHER_ITEMS,
+  DEFAULT_UI_SCALE,
   DEFAULT_SHORTCUTS
 } from "../../shared/contracts";
 import { TitleBar } from "./components/TitleBar";
@@ -46,8 +49,14 @@ import {
   upsertSession,
   upsertSnapshot
 } from "./lib/sessionReconciliation";
-import { isRenameInputTarget, isShortcutCaptureTarget, matchesShortcut } from "./lib/shortcuts";
+import {
+  isRenameInputTarget,
+  isShortcutCaptureTarget,
+  matchesPointerShortcut,
+  matchesShortcut
+} from "./lib/shortcuts";
 import { homeGridPixelSize, homeLayoutFitsGrid, placeHomeWidget } from "./features/home/homeLayout";
+import { boundsInsideRegion, translateBounds } from "./features/workspace/canvasRegions";
 
 interface HomeEditDraft {
   homeGridSize: HomeGridSize;
@@ -56,12 +65,19 @@ interface HomeEditDraft {
 
 const FALLBACK_SETTINGS: AppSettings = {
   locale: "ru",
+  restoreTerminalSessions: false,
+  persistCanvasRegions: true,
+  persistStickyNotes: true,
   palette: "sage",
   homeAccentPreset: "classic",
   homeAccentColors: { ...DEFAULT_HOME_ACCENT_COLORS },
+  sessionRowColorMode: "status",
   homeLauncherProviders: ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"],
   homeLimitProviders: ["codex", "claude", "qwen", "kimi", "opencode", "grok"],
+  canvasLauncherItems: [...DEFAULT_CANVAS_LAUNCHER_ITEMS],
   radialLauncherItems: [...DEFAULT_RADIAL_LAUNCHER_ITEMS],
+  agentLifecycleHooksEnabled: true,
+  uiScale: DEFAULT_UI_SCALE,
   canvasColor: "sage",
   pattern: "dots",
   snapToGrid: true,
@@ -78,6 +94,10 @@ const FALLBACK_SETTINGS: AppSettings = {
   hoverFocus: false,
   hoverFocusSpeed: "normal",
   showShortcutHints: true,
+  minimapPlacement: "top-right",
+  minimapInteractionMode: "click",
+  shortcutHintsPlacement: "bottom-right",
+  canvasControlsPlacement: "bottom-left",
   shortcuts: { ...DEFAULT_SHORTCUTS },
   mediaPath: null,
   mediaFit: "cover",
@@ -85,8 +105,9 @@ const FALLBACK_SETTINGS: AppSettings = {
   acknowledgedDangerousProfiles: [],
   homeGridSize: { ...DEFAULT_HOME_GRID_SIZE },
   homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
-  pluginCanvas: [],
+  canvasRegions: [],
   stickyNotes: [],
+  pluginCanvas: [],
   browserCanvas: null,
   browserAgentAccess: true,
   browserShowAgentPresence: true,
@@ -163,6 +184,7 @@ export function App(): React.JSX.Element {
   const browserCanvasRef = useRef<BrowserCanvasState | null>(null);
   const pluginBrowserOpenQueueRef = useRef(new PluginBrowserOpenQueue());
   const [launchProvider, setLaunchProvider] = useState<AgentProviderId | null>(null);
+  const [launchPosition, setLaunchPosition] = useState<Point | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [homeEditDraft, setHomeEditDraft] = useState<HomeEditDraft | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -306,9 +328,12 @@ export function App(): React.JSX.Element {
   const createSession = useCallback(async (
     provider: ProviderId,
     profile: LaunchProfileId,
-    cwd: string
+    cwd: string,
+    requestedCenter?: Point
   ): Promise<SessionSnapshot> => {
-    const position = nextSessionPosition(sessions.length, settings.homeGridSize);
+    const position = requestedCenter
+      ? centeredWindowPosition(requestedCenter, { width: 700, height: 430 })
+      : nextSessionPosition(sessions.length, settings.homeGridSize);
     const session = await window.canvasTTY.terminal.create({ provider, profile, cwd, position });
     setSessions((current) => upsertSnapshot(current, session));
     setActiveSessionId(session.id);
@@ -318,19 +343,24 @@ export function App(): React.JSX.Element {
     return session;
   }, [sessions.length, saveSettings, settings.homeGridSize]);
 
-  const openTerminal = useCallback(async (): Promise<void> => {
+  const openTerminal = useCallback(async (position?: Point): Promise<void> => {
     try {
-      await createSession("terminal", "normal", settings.lastDirectory);
+      await createSession("terminal", "normal", settings.lastDirectory, position);
       showToast(t(settings.locale, "terminalStarted"));
     } catch (error) {
       showToast(error instanceof Error ? error.message : t(settings.locale, "launchFailed"));
     }
   }, [createSession, settings.lastDirectory, settings.locale, showToast]);
 
+  const openAgent = useCallback((provider: AgentProviderId, position?: Point): void => {
+    setLaunchPosition(position ?? null);
+    setLaunchProvider(provider);
+  }, []);
+
   useEffect(() => window.canvasTTY.plugins.onOpenLauncher(({ provider }) => {
     if (provider === "terminal") void openTerminal();
-    else setLaunchProvider(provider);
-  }), [openTerminal]);
+    else openAgent(provider);
+  }), [openAgent, openTerminal]);
 
 
   const launchAgent = useCallback(async (
@@ -338,9 +368,10 @@ export function App(): React.JSX.Element {
     profile: LaunchProfileId,
     cwd: string
   ): Promise<void> => {
-    await createSession(provider, profile, cwd);
+    await createSession(provider, profile, cwd, launchPosition ?? undefined);
+    setLaunchPosition(null);
     showToast(`${t(settings.locale, "sessionStarted")}: ${provider}`);
-  }, [createSession, settings.locale, showToast]);
+  }, [createSession, launchPosition, settings.locale, showToast]);
 
   const restartSession = useCallback(async (id: string): Promise<void> => {
     try {
@@ -402,27 +433,23 @@ export function App(): React.JSX.Element {
     void saveSettings({ browserCanvas });
   }, [saveSettings]);
 
-  const createStickyNote = useCallback((anchor?: Point): void => {
-    const viewport = canvasViewportSize();
-    const size = { width: 280, height: 220 };
-    const cascade = (settings.stickyNotes.length % 8) * 18;
-    const center = anchor ?? {
-      x: (viewport.width / 2 - camera.x) / camera.zoom,
-      y: (viewport.height / 2 - camera.y) / camera.zoom
-    };
-    const note: StickyNote = {
-      id: crypto.randomUUID(),
-      text: "",
-      position: {
-        x: center.x - size.width / 2 + cascade,
-        y: center.y - size.height / 2 + cascade
-      },
-      size
-    };
+  const createCanvasRegion = useCallback((region: CanvasRegion): void => {
+    const canvasRegions = [...settings.canvasRegions, region];
+    setSettings((current) => ({ ...current, canvasRegions }));
+    void saveSettings({ canvasRegions });
+  }, [saveSettings, settings.canvasRegions]);
+
+  const changeCanvasRegion = useCallback((region: CanvasRegion): void => {
+    const canvasRegions = settings.canvasRegions.map((candidate) => candidate.id === region.id ? region : candidate);
+    setSettings((current) => ({ ...current, canvasRegions }));
+    void saveSettings({ canvasRegions });
+  }, [saveSettings, settings.canvasRegions]);
+
+  const createStickyNote = useCallback((note: StickyNote): void => {
     const stickyNotes = [...settings.stickyNotes, note];
     setSettings((current) => ({ ...current, stickyNotes }));
     void saveSettings({ stickyNotes });
-  }, [camera, saveSettings, settings.stickyNotes]);
+  }, [saveSettings, settings.stickyNotes]);
 
   const changeStickyNoteBounds = useCallback((id: string, bounds: SessionBounds): void => {
     const stickyNotes = settings.stickyNotes.map((note) => note.id === id
@@ -438,11 +465,64 @@ export function App(): React.JSX.Element {
     void saveSettings({ stickyNotes });
   }, [saveSettings, settings.stickyNotes]);
 
-  const disposeStickyNote = useCallback((id: string): void => {
+  const deleteStickyNote = useCallback((id: string): void => {
     const stickyNotes = settings.stickyNotes.filter((note) => note.id !== id);
     setSettings((current) => ({ ...current, stickyNotes }));
     void saveSettings({ stickyNotes });
   }, [saveSettings, settings.stickyNotes]);
+
+  const changeCanvasRegionBounds = useCallback((
+    id: string,
+    bounds: SessionBounds,
+    interaction: "move" | "resize"
+  ): void => {
+    const previous = settings.canvasRegions.find((region) => region.id === id);
+    if (!previous) return;
+    const canvasRegions = settings.canvasRegions.map((region) => region.id === id
+      ? { ...region, position: bounds.position, size: bounds.size }
+      : region);
+    const patch: Partial<AppSettings> = { canvasRegions };
+
+    if (interaction === "move") {
+      const delta = {
+        x: bounds.position.x - previous.position.x,
+        y: bounds.position.y - previous.position.y
+      };
+      if (delta.x !== 0 || delta.y !== 0) {
+        const movedSessions = sessions.map((session) => {
+          if (!boundsInsideRegion(session, previous)) return session;
+          const moved = translateBounds(session, delta);
+          window.canvasTTY.terminal.setBounds(session.id, moved);
+          return { ...session, ...moved };
+        });
+        const pluginCanvas = settings.pluginCanvas.map((instance) => {
+          if (!boundsInsideRegion(instance, previous)) return instance;
+          const moved = translateBounds(instance, delta);
+          return { ...instance, ...moved };
+        });
+        const browserCanvas = settings.browserCanvas && boundsInsideRegion(settings.browserCanvas, previous)
+          ? translateBounds(settings.browserCanvas, delta)
+          : settings.browserCanvas;
+        const stickyNotes = settings.stickyNotes.map((note) => boundsInsideRegion(note, previous)
+          ? { ...note, ...translateBounds(note, delta) }
+          : note);
+        setSessions(movedSessions);
+        patch.pluginCanvas = pluginCanvas;
+        patch.browserCanvas = browserCanvas;
+        patch.stickyNotes = stickyNotes;
+        browserCanvasRef.current = browserCanvas;
+      }
+    }
+
+    setSettings((current) => ({ ...current, ...patch }));
+    void saveSettings(patch);
+  }, [saveSettings, sessions, settings.browserCanvas, settings.canvasRegions, settings.pluginCanvas, settings.stickyNotes]);
+
+  const deleteCanvasRegion = useCallback((id: string): void => {
+    const canvasRegions = settings.canvasRegions.filter((region) => region.id !== id);
+    setSettings((current) => ({ ...current, canvasRegions }));
+    void saveSettings({ canvasRegions });
+  }, [saveSettings, settings.canvasRegions]);
 
   const disposePluginCanvas = useCallback((id: string): void => {
     void saveSettings({ pluginCanvas: settings.pluginCanvas.filter((instance) => instance.id !== id) });
@@ -457,16 +537,18 @@ export function App(): React.JSX.Element {
     setCamera(focusCamera(instance.position, instance.size, PLUGIN_CANVAS_FOCUS_ZOOM));
   }, [settings.pluginCanvas]);
 
-  const openBrowser = useCallback(async (url?: string): Promise<void> => {
+  const openBrowser = useCallback(async (url?: string, requestedCenter?: Point): Promise<void> => {
     const browserApi = window.canvasTTY.browser;
     if (!browserApi) throw new Error(t(settings.locale, "browserRestartRequired"));
     const existingBrowserCanvas = browserCanvasRef.current;
     const homeSize = homeGridPixelSize(settings.homeGridSize);
     const browserCanvas = existingBrowserCanvas ?? {
-      position: {
-        x: homeSize.width + 160 + ((sessions.length + settings.pluginCanvas.length) % 2) * 760,
-        y: Math.floor((sessions.length + settings.pluginCanvas.length) / 2) * 500 + 20
-      },
+      position: requestedCenter
+        ? centeredWindowPosition(requestedCenter, { width: 920, height: 620 })
+        : {
+            x: homeSize.width + 160 + ((sessions.length + settings.pluginCanvas.length) % 2) * 760,
+            y: Math.floor((sessions.length + settings.pluginCanvas.length) / 2) * 500 + 20
+          },
       size: { width: 920, height: 620 }
     };
     const snapshot = await browserApi.open(url);
@@ -500,8 +582,8 @@ export function App(): React.JSX.Element {
     });
   }, [openBrowser, settings.locale, showToast]);
 
-  const openBrowserFromUi = useCallback((): void => {
-    void openBrowser().catch((error: unknown) => {
+  const openBrowserFromUi = useCallback((position?: Point): void => {
+    void openBrowser(undefined, position).catch((error: unknown) => {
       showToast(error instanceof Error ? error.message : t(settings.locale, "browserActionFailed"));
     });
   }, [openBrowser, settings.locale, showToast]);
@@ -631,13 +713,42 @@ export function App(): React.JSX.Element {
     showToast(`${t(settings.locale, "pluginInstalled")}: ${installed.manifest.name}`);
   }, [saveSettings, settings.homeGridSize, settings.homeLayout, settings.locale, showToast]);
 
-  const setPluginEnabled = useCallback(async (pluginId: string, enabled: boolean): Promise<void> => {
-    const updated = await window.canvasTTY.plugins.setEnabled(pluginId, enabled);
-    setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
+  const refreshPlugins = useCallback(async (): Promise<void> => {
+    setPlugins(await window.canvasTTY.plugins.list());
   }, []);
 
+  const setPluginEnabled = useCallback(async (pluginId: string, enabled: boolean): Promise<void> => {
+    try {
+      const updated = await window.canvasTTY.plugins.setEnabled(pluginId, enabled);
+      setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
+  }, [refreshPlugins]);
+
+  const setPluginHookEnabled = useCallback(async (
+    pluginId: string,
+    hookId: string,
+    enabled: boolean
+  ): Promise<void> => {
+    try {
+      const updated = await window.canvasTTY.plugins.setHookEnabled(pluginId, hookId, enabled);
+      setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
+  }, [refreshPlugins]);
+
   const setPluginModules = useCallback(async (pluginId: string, selectedModules: string[]): Promise<void> => {
-    const updated = await window.canvasTTY.plugins.setModules(pluginId, selectedModules);
+    let updated: InstalledPlugin;
+    try {
+      updated = await window.canvasTTY.plugins.setModules(pluginId, selectedModules);
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
     setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
     const contributions = new Set(updated.manifest.contributions.map((contribution) => contribution.id));
     await saveSettings({
@@ -649,17 +760,22 @@ export function App(): React.JSX.Element {
         instance.pluginId !== pluginId || contributions.has(instance.contributionId)
       ))
     });
-  }, [saveSettings, settings.homeLayout, settings.pluginCanvas]);
+  }, [refreshPlugins, saveSettings, settings.homeLayout, settings.pluginCanvas]);
 
   const uninstallPlugin = useCallback(async (pluginId: string): Promise<void> => {
-    await window.canvasTTY.plugins.uninstall(pluginId);
+    try {
+      await window.canvasTTY.plugins.uninstall(pluginId);
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
     setPlugins((current) => current.filter((plugin) => plugin.manifest.id !== pluginId));
     await saveSettings({
       homeLayout: settings.homeLayout.filter((placement) => !placement.widgetId.startsWith(`plugin:${pluginId}:`)),
       pluginCanvas: settings.pluginCanvas.filter((instance) => instance.pluginId !== pluginId)
     });
     showToast(t(settings.locale, "pluginRemoved"));
-  }, [saveSettings, settings.homeLayout, settings.locale, settings.pluginCanvas, showToast]);
+  }, [refreshPlugins, saveSettings, settings.homeLayout, settings.locale, settings.pluginCanvas, showToast]);
 
   const searchPlugins = useCallback((query: string): Promise<GithubPluginSearchResult[]> => (
     window.canvasTTY.plugins.search(query)
@@ -682,10 +798,16 @@ export function App(): React.JSX.Element {
   ), []);
 
   const updatePlugin = useCallback(async (pluginId: string): Promise<void> => {
-    const updated = await window.canvasTTY.plugins.update(pluginId);
+    let updated: InstalledPlugin;
+    try {
+      updated = await window.canvasTTY.plugins.update(pluginId);
+    } catch (error) {
+      await refreshPlugins().catch(() => undefined);
+      throw error;
+    }
     setPlugins((current) => current.map((plugin) => plugin.manifest.id === pluginId ? updated : plugin));
     showToast(`${t(settings.locale, "pluginUpdated")}: ${updated.manifest.name}`);
-  }, [settings.locale, showToast]);
+  }, [refreshPlugins, settings.locale, showToast]);
 
   const openPluginCanvasContribution = useCallback(async (
     plugin: InstalledPlugin,
@@ -774,27 +896,51 @@ export function App(): React.JSX.Element {
   }, [homeEditDraft, settings.locale, showToast]);
 
   useEffect(() => {
+    const performShortcut = (shortcut: "home" | "renameWindow"): void => {
+      if (shortcut === "home") {
+        goHome();
+        return;
+      }
+      if (!activeSessionId) {
+        showToast(t(settings.locale, "selectWindowToRename"));
+        return;
+      }
+      setRenamingSessionId(activeSessionId);
+    };
     const handleShortcut = (event: KeyboardEvent): void => {
       if (event.repeat || isShortcutCaptureTarget(event.target) || isRenameInputTarget(event.target)) return;
       if (matchesShortcut(event, settings.shortcuts.home)) {
         event.preventDefault();
         event.stopPropagation();
-        goHome();
+        performShortcut("home");
         return;
       }
       if (matchesShortcut(event, settings.shortcuts.renameWindow)) {
         event.preventDefault();
         event.stopPropagation();
-        if (!activeSessionId) {
-          showToast(t(settings.locale, "selectWindowToRename"));
-          return;
-        }
-        setRenamingSessionId(activeSessionId);
+        performShortcut("renameWindow");
       }
     };
 
+    const handlePointerShortcut = (event: PointerEvent): void => {
+      if (isShortcutCaptureTarget(event.target) || isRenameInputTarget(event.target)) return;
+      const action = matchesPointerShortcut(event, settings.shortcuts.home)
+        ? "home"
+        : matchesPointerShortcut(event, settings.shortcuts.renameWindow)
+          ? "renameWindow"
+          : null;
+      if (!action) return;
+      event.preventDefault();
+      event.stopPropagation();
+      performShortcut(action);
+    };
+
     window.addEventListener("keydown", handleShortcut, true);
-    return () => window.removeEventListener("keydown", handleShortcut, true);
+    window.addEventListener("pointerdown", handlePointerShortcut, true);
+    return () => {
+      window.removeEventListener("keydown", handleShortcut, true);
+      window.removeEventListener("pointerdown", handlePointerShortcut, true);
+    };
   }, [activeSessionId, goHome, settings.locale, settings.shortcuts, showToast]);
 
   const appearance = resolveAppearanceSettings(settings);
@@ -810,10 +956,11 @@ export function App(): React.JSX.Element {
     [appearance.canvasColor, appearance.homeAccentPreset, settings.palette, windowState.fullscreen, windowState.isMacOS]
   );
   const rootStyle = useMemo(
-    () => appearance.homeAccentPreset === "custom"
-      ? customHomeAccentStyle(appearance.homeAccentColors)
-      : undefined,
-    [appearance.homeAccentColors, appearance.homeAccentPreset]
+    () => ({
+      ...(appearance.homeAccentPreset === "custom" ? customHomeAccentStyle(appearance.homeAccentColors) : {}),
+      "--ui-scale": settings.uiScale
+    }) as React.CSSProperties,
+    [appearance.homeAccentColors, appearance.homeAccentPreset, settings.uiScale]
   );
   const workspaceSettings = useMemo(() => homeEditDraft ? {
     ...settings,
@@ -840,8 +987,8 @@ export function App(): React.JSX.Element {
           onCameraChange={changeCamera}
           onGoHome={goHome}
           onOpenSettings={() => setSettingsOpen(true)}
-          onOpenAgent={setLaunchProvider}
-          onOpenTerminal={() => void openTerminal()}
+          onOpenAgent={openAgent}
+          onOpenTerminal={(position) => void openTerminal(position)}
           onOpenBrowser={openBrowserFromUi}
           onRequestMedia={requestMedia}
           onRemoveMedia={removeMedia}
@@ -853,10 +1000,6 @@ export function App(): React.JSX.Element {
           onPluginCanvasBoundsChange={changePluginCanvasBounds}
           onDisposePluginCanvas={disposePluginCanvas}
           onFocusPluginCanvas={focusPluginCanvas}
-          onCreateStickyNote={createStickyNote}
-          onStickyNoteBoundsChange={changeStickyNoteBounds}
-          onStickyNoteTextChange={changeStickyNoteText}
-          onDisposeStickyNote={disposeStickyNote}
           onFocusSession={focusSession}
           activeSessionId={activeSessionId}
           browserSelected={browserSelected}
@@ -881,13 +1024,24 @@ export function App(): React.JSX.Element {
           onBrowserBoundsChange={changeBrowserBounds}
           onFocusBrowser={focusBrowser}
           onCloseBrowser={() => void closeBrowser()}
+          onCreateCanvasRegion={createCanvasRegion}
+          onChangeCanvasRegion={changeCanvasRegion}
+          onCanvasRegionBoundsChange={changeCanvasRegionBounds}
+          onDeleteCanvasRegion={deleteCanvasRegion}
+          onCreateStickyNote={createStickyNote}
+          onStickyNoteBoundsChange={changeStickyNoteBounds}
+          onStickyNoteTextChange={changeStickyNoteText}
+          onDeleteStickyNote={deleteStickyNote}
         />
       </main>
 
       <AgentLaunchDialog
         provider={launchProvider}
         settings={settings}
-        onClose={() => setLaunchProvider(null)}
+        onClose={() => {
+          setLaunchProvider(null);
+          setLaunchPosition(null);
+        }}
         onAcknowledge={acknowledgeDanger}
         onLaunch={launchAgent}
       />
@@ -908,6 +1062,7 @@ export function App(): React.JSX.Element {
         onUpdatePlugin={updatePlugin}
         onSetPluginModules={setPluginModules}
         onSetPluginEnabled={setPluginEnabled}
+        onSetPluginHookEnabled={setPluginHookEnabled}
         onUninstallPlugin={uninstallPlugin}
         onOpenPluginContribution={openPluginContribution}
         onToggleHomeWidget={toggleHomeWidget}
@@ -924,6 +1079,13 @@ function nextSessionPosition(index: number, homeGridSize: HomeGridSize): Point {
   return {
     x: homeSize.width + 160 + (index % 2) * 760,
     y: Math.floor(index / 2) * 500 + 20
+  };
+}
+
+function centeredWindowPosition(point: Point, size: { width: number; height: number }): Point {
+  return {
+    x: point.x - size.width / 2,
+    y: point.y - size.height / 2
   };
 }
 

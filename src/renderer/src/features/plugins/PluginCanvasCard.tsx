@@ -26,6 +26,7 @@ interface PluginCanvasCardProps {
   locale: LocaleId;
   palette: PaletteId;
   zoom: number;
+  stackIndex: number;
   snapEnabled: boolean;
   sessions: readonly SessionSnapshot[];
   limits: LimitsSnapshot | null;
@@ -60,6 +61,7 @@ export function PluginCanvasCard({
   locale,
   palette,
   zoom,
+  stackIndex,
   snapEnabled,
   sessions,
   limits,
@@ -185,12 +187,14 @@ export function PluginCanvasCard({
     <article
       className={`plugin-canvas-card ${summaryMode ? "plugin-canvas-card--summary" : ""}`}
       data-interactive="true"
+      data-canvas-layer-id={`plugin:${instance.id}`}
       data-canvas-widget-id={pluginCanvasWidgetId(instance.id)}
       data-canvas-widget-focusable="true"
       data-wheel-owner={summaryMode ? undefined : "local"}
       style={{
         width: size.width,
         height: size.height,
+        zIndex: stackIndex,
         transform: `translate(${position.x}px, ${position.y}px)`,
         "--summary-scale": summaryScale
       } as React.CSSProperties}
@@ -204,7 +208,7 @@ export function PluginCanvasCard({
       >
         <span><strong>{instance.title}</strong><small>{plugin.manifest.name}</small></span>
         <button type="button" onClick={() => onDispose(instance.id)} title={t(locale, "close")} aria-label={t(locale, "close")}>
-          <UiIcon name="close" size={16} />
+          <UiIcon name="close" size="1.23em" />
         </button>
       </header>
       <PluginFrame

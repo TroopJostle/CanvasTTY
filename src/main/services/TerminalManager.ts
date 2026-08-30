@@ -14,7 +14,11 @@ import type {
   SessionSnapshot,
   TerminalDataEvent
 } from "../../shared/contracts.ts";
-import { IPC } from "../../shared/contracts.ts";
+import {
+  INITIAL_TERMINAL_COLS,
+  INITIAL_TERMINAL_ROWS,
+  IPC
+} from "../../shared/contracts.ts";
 import type {
   AgentBrowserLaunchCoordinator,
   PreparedAgentBrowserPtyLaunch
@@ -29,6 +33,11 @@ import { mergeOpenCodeLaunchEnvironment } from "./agent-runtime/ProviderRuntimeL
 import { tryPtyOperation } from "./ptySafety.ts";
 import { terminalFailureDetails } from "./terminalFailureDetails.ts";
 import { resolveTerminalLaunch } from "./terminalLaunch.ts";
+import {
+  persistedTerminalSession,
+  type PersistedTerminalSession,
+  type TerminalSessionStore
+} from "./TerminalSessionStore.ts";
 import type { ProviderCliRegistry, UnavailableProviderCli } from "./providerCliRegistry.ts";
 import {
   createProviderLifecycleParser,
@@ -45,6 +54,8 @@ const MAX_TERMINAL_SIZE = { width: 1_600, height: 1_100 };
 interface ManagedSession {
   metadata: SessionMetadata;
   process: IPty | null;
+  cols: number;
+  rows: number;
   bufferChunks: string[];
   bufferStart: number;
   bufferLength: number;
@@ -53,6 +64,8 @@ interface ManagedSession {
   agentBrowser: PreparedAgentBrowserPtyLaunch | null;
   agentRuntime: PreparedAgentRuntimePtyLaunch | null;
   lifecycle: ProviderLifecycleParser | null;
+  awaitingInitialResize: boolean;
+  resumeOnLaunch: boolean;
 }
 
 export interface ProviderLifecycleSignal {
@@ -72,17 +85,61 @@ export class TerminalManager {
   private readonly providerClis: ProviderCliRegistry;
   private readonly agentBrowser?: AgentBrowserLaunchCoordinator;
   private readonly agentRuntime?: AgentRuntimeLaunchCoordinator;
+  private readonly spawnPty: typeof pty.spawn;
+  private lifecycleHooksEnabled: boolean;
+  private sessionStore: TerminalSessionStore | null = null;
+  private sessionPersistenceEnabled = false;
+  private suppressPersistence = false;
 
   constructor(
     emit: Emit,
     providerClis: ProviderCliRegistry,
     agentBrowser?: AgentBrowserLaunchCoordinator,
-    agentRuntime?: AgentRuntimeLaunchCoordinator
+    agentRuntime?: AgentRuntimeLaunchCoordinator,
+    lifecycleHooksEnabled = true,
+    spawnPty: typeof pty.spawn = pty.spawn
   ) {
     this.emit = emit;
     this.providerClis = providerClis;
     this.agentBrowser = agentBrowser;
     this.agentRuntime = agentRuntime;
+    this.spawnPty = spawnPty;
+    this.lifecycleHooksEnabled = lifecycleHooksEnabled;
+  }
+
+  configureSessionPersistence(store: TerminalSessionStore, enabled: boolean): void {
+    this.sessionStore = store;
+    this.sessionPersistenceEnabled = Boolean(enabled);
+  }
+
+  async restorePersistedSessions(): Promise<void> {
+    const store = this.sessionStore;
+    if (!store) return;
+    const persisted = await store.load();
+    if (!this.sessionPersistenceEnabled) {
+      if (persisted.length > 0) await store.clear();
+      return;
+    }
+
+    for (const descriptor of persisted) this.restorePersistedSession(descriptor);
+    await this.persistSessions();
+  }
+
+  async setSessionPersistenceEnabled(enabled: boolean): Promise<void> {
+    const next = Boolean(enabled);
+    if (this.sessionPersistenceEnabled === next) return;
+    this.sessionPersistenceEnabled = next;
+    if (next) await this.persistSessions();
+    else await this.sessionStore?.clear();
+  }
+
+  async shutdown(): Promise<void> {
+    await this.persistSessions().catch((error) => {
+      console.warn("CanvasTTY terminal window state could not be saved during shutdown.", error);
+    });
+    this.suppressPersistence = true;
+    this.disposeAll();
+    if (this.sessionStore) await this.sessionStore.flush().catch(() => undefined);
   }
 
   list(): SessionSnapshot[] {
@@ -109,12 +166,18 @@ export class TerminalManager {
       exitCode: null,
       failureDetails: null
     };
-    const launched = this.spawnProcess(id, request.provider, request.profile, request.cwd);
+    const awaitMeasuredGrid = request.provider === "grok"
+      && this.providerClis.get(request.provider).state === "available";
+    const launched = awaitMeasuredGrid
+      ? { process: null, agentBrowser: null, agentRuntime: null, failure: null }
+      : this.spawnProcess(id, request.provider, request.profile, request.cwd);
     if (launched.failure) applyLaunchFailure(metadata, launched.failure);
 
     const session: ManagedSession = {
       metadata,
       process: launched.process,
+      cols: INITIAL_TERMINAL_COLS,
+      rows: INITIAL_TERMINAL_ROWS,
       bufferChunks: [],
       bufferStart: 0,
       bufferLength: 0,
@@ -122,7 +185,11 @@ export class TerminalManager {
       outputTimer: null,
       agentBrowser: launched.agentBrowser,
       agentRuntime: launched.agentRuntime,
-      lifecycle: createProviderLifecycleParser(request.provider, request.cwd)
+      lifecycle: this.lifecycleHooksEnabled
+        ? createProviderLifecycleParser(request.provider, request.cwd)
+        : null,
+      awaitingInitialResize: awaitMeasuredGrid,
+      resumeOnLaunch: false
     };
     this.sessions.set(id, session);
     if (launched.process) this.bindProcess(id, session, launched.process);
@@ -130,6 +197,7 @@ export class TerminalManager {
     if (runtimeStatus) session.metadata.status = runtimeStatus;
 
     this.emitSession(metadata);
+    this.schedulePersistence();
     return snapshot(session);
   }
 
@@ -138,16 +206,40 @@ export class TerminalManager {
     if (!session) throw new Error("Terminal session does not exist.");
     if (session.metadata.exitCode === null) throw new Error("Terminal session is still running.");
 
+    if (session.metadata.provider === "grok") {
+      session.agentBrowser?.cleanup();
+      session.agentRuntime?.cleanup();
+      session.process = null;
+      session.agentBrowser = null;
+      session.agentRuntime = null;
+      session.lifecycle = this.lifecycleHooksEnabled
+        ? createProviderLifecycleParser(session.metadata.provider, session.metadata.cwd)
+        : null;
+      session.awaitingInitialResize = true;
+      session.resumeOnLaunch = false;
+      session.metadata.startedAt = Date.now();
+      session.metadata.status = initialSessionStatus(session.metadata.provider);
+      session.metadata.exitCode = null;
+      session.metadata.failureDetails = null;
+      this.emitSession(session.metadata);
+      return snapshot(session);
+    }
+
     const launched = this.spawnProcess(
       id,
       session.metadata.provider,
       session.metadata.profile,
-      session.metadata.cwd
+      session.metadata.cwd,
+      session.cols,
+      session.rows
     );
     session.process = launched.process;
     session.agentBrowser = launched.agentBrowser;
     session.agentRuntime = launched.agentRuntime;
-    session.lifecycle = createProviderLifecycleParser(session.metadata.provider, session.metadata.cwd);
+    session.awaitingInitialResize = false;
+    session.lifecycle = this.lifecycleHooksEnabled
+      ? createProviderLifecycleParser(session.metadata.provider, session.metadata.cwd)
+      : null;
     session.metadata.startedAt = Date.now();
     if (launched.failure) {
       applyLaunchFailure(session.metadata, launched.failure);
@@ -174,9 +266,16 @@ export class TerminalManager {
   resize(id: string, cols: number, rows: number): void {
     if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
     const session = this.sessions.get(id);
-    if (!session || session.metadata.exitCode !== null || !session.process) return;
+    if (!session) return;
     const safeCols = Math.max(20, Math.min(400, Math.floor(cols)));
     const safeRows = Math.max(5, Math.min(200, Math.floor(rows)));
+    session.cols = safeCols;
+    session.rows = safeRows;
+    if (session.awaitingInitialResize) {
+      this.launchAwaitingSession(id, session);
+      return;
+    }
+    if (session.metadata.exitCode !== null || !session.process) return;
     const process = session.process;
     tryPtyOperation(() => process.resize(safeCols, safeRows));
   }
@@ -192,6 +291,7 @@ export class TerminalManager {
       height: clamp(bounds.size.height, MIN_TERMINAL_SIZE.height, MAX_TERMINAL_SIZE.height)
     };
     this.emitSession(session.metadata);
+    this.schedulePersistence();
   }
 
   rename(id: string, title: string): SessionMetadata {
@@ -204,17 +304,36 @@ export class TerminalManager {
     session.metadata.title = nextTitle.slice(0, 80);
     session.metadata.titleCustomized = true;
     this.emitSession(session.metadata);
+    this.schedulePersistence();
     return structuredClone(session.metadata);
   }
 
   applyProviderSignal(id: string, signal: ProviderLifecycleSignal): void {
     const session = this.sessions.get(id);
-    if (!session || session.metadata.status === "done" || session.metadata.status === "failed") return;
+    if (!this.lifecycleHooksEnabled || !session || session.metadata.status === "done" || session.metadata.status === "failed") return;
 
     const nextStatus = signal.state;
     if (session.metadata.status === nextStatus) return;
     session.metadata.status = nextStatus;
     this.emitSession(session.metadata);
+  }
+
+  setLifecycleHooksEnabled(enabled: boolean): void {
+    const next = Boolean(enabled);
+    if (this.lifecycleHooksEnabled === next) return;
+    this.lifecycleHooksEnabled = next;
+    if (next) return;
+    for (const session of this.sessions.values()) {
+      session.lifecycle = null;
+      if (
+        session.metadata.provider === "terminal"
+        || session.metadata.status === "done"
+        || session.metadata.status === "failed"
+        || session.metadata.status === "unavailable"
+      ) continue;
+      session.metadata.status = "unavailable";
+      this.emitSession(session.metadata);
+    }
   }
 
   dispose(id: string): void {
@@ -233,6 +352,7 @@ export class TerminalManager {
       }
     }
     this.emit(IPC.terminalRemoved, { id });
+    this.schedulePersistence();
   }
 
   disposeAll(): void {
@@ -241,16 +361,154 @@ export class TerminalManager {
     }
   }
 
+  private restorePersistedSession(descriptor: PersistedTerminalSession): void {
+    if (this.sessions.has(descriptor.id)) return;
+    const metadata: SessionMetadata = {
+      id: descriptor.id,
+      revision: 0,
+      provider: descriptor.provider,
+      profile: descriptor.profile,
+      title: descriptor.title,
+      titleCustomized: descriptor.titleCustomized,
+      cwd: descriptor.cwd,
+      position: descriptor.position,
+      size: descriptor.size,
+      status: initialSessionStatus(descriptor.provider),
+      startedAt: Date.now(),
+      exitCode: null,
+      failureDetails: null
+    };
+
+    let process: IPty | null = null;
+    let agentBrowser: PreparedAgentBrowserPtyLaunch | null = null;
+    let agentRuntime: PreparedAgentRuntimePtyLaunch | null = null;
+    let directoryReady = true;
+    try {
+      assertDirectory(descriptor.cwd);
+    } catch (error) {
+      directoryReady = false;
+      metadata.status = "failed";
+      metadata.exitCode = 1;
+      metadata.failureDetails = error instanceof Error ? error.message : String(error);
+    }
+    const awaitMeasuredGrid = directoryReady
+      && descriptor.provider === "grok"
+      && this.providerClis.get(descriptor.provider).state === "available";
+
+    if (directoryReady && !awaitMeasuredGrid) {
+      try {
+        const launched = this.spawnProcess(
+          descriptor.id,
+          descriptor.provider,
+          descriptor.profile,
+          descriptor.cwd,
+          INITIAL_TERMINAL_COLS,
+          INITIAL_TERMINAL_ROWS,
+          descriptor.provider !== "terminal"
+        );
+        process = launched.process;
+        agentBrowser = launched.agentBrowser;
+        agentRuntime = launched.agentRuntime;
+        if (launched.failure) applyLaunchFailure(metadata, launched.failure);
+      } catch (error) {
+        metadata.status = "failed";
+        metadata.exitCode = 1;
+        metadata.failureDetails = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    const session: ManagedSession = {
+      metadata,
+      process,
+      cols: INITIAL_TERMINAL_COLS,
+      rows: INITIAL_TERMINAL_ROWS,
+      bufferChunks: [],
+      bufferStart: 0,
+      bufferLength: 0,
+      pendingOutput: [],
+      outputTimer: null,
+      agentBrowser,
+      agentRuntime,
+      lifecycle: this.lifecycleHooksEnabled
+        ? createProviderLifecycleParser(descriptor.provider, descriptor.cwd)
+        : null,
+      awaitingInitialResize: awaitMeasuredGrid,
+      resumeOnLaunch: awaitMeasuredGrid && descriptor.provider !== "terminal"
+    };
+    this.sessions.set(descriptor.id, session);
+    if (process) this.bindProcess(descriptor.id, session, process);
+    const runtimeStatus = this.agentRuntime?.currentStatus(descriptor.id);
+    if (runtimeStatus) session.metadata.status = runtimeStatus;
+    this.emitSession(metadata);
+  }
+
+  private persistSessions(): Promise<void> {
+    if (!this.sessionPersistenceEnabled || this.suppressPersistence || !this.sessionStore) {
+      return Promise.resolve();
+    }
+    return this.sessionStore.replace(
+      [...this.sessions.values()].map((session) => persistedTerminalSession(session.metadata))
+    );
+  }
+
+  private schedulePersistence(): void {
+    void this.persistSessions().catch((error) => {
+      console.warn("CanvasTTY terminal window state could not be saved.", error);
+    });
+  }
+
   private emitSession(metadata: SessionMetadata): void {
     metadata.revision += 1;
     this.emit(IPC.terminalSession, { session: structuredClone(metadata) });
+  }
+
+  private launchAwaitingSession(id: string, session: ManagedSession): void {
+    if (!session.awaitingInitialResize) return;
+    session.awaitingInitialResize = false;
+    const resumePrevious = session.resumeOnLaunch;
+    session.resumeOnLaunch = false;
+    try {
+      const launched = this.spawnProcess(
+        id,
+        session.metadata.provider,
+        session.metadata.profile,
+        session.metadata.cwd,
+        session.cols,
+        session.rows,
+        resumePrevious
+      );
+      session.process = launched.process;
+      session.agentBrowser = launched.agentBrowser;
+      session.agentRuntime = launched.agentRuntime;
+      if (launched.failure) {
+        applyLaunchFailure(session.metadata, launched.failure);
+      } else {
+        session.metadata.status = initialSessionStatus(session.metadata.provider);
+        session.metadata.exitCode = null;
+        session.metadata.failureDetails = null;
+        if (launched.process) this.bindProcess(id, session, launched.process);
+        const runtimeStatus = this.agentRuntime?.currentStatus(id);
+        if (runtimeStatus) session.metadata.status = runtimeStatus;
+      }
+    } catch (error) {
+      session.process = null;
+      session.agentBrowser = null;
+      session.agentRuntime = null;
+      session.metadata.status = "failed";
+      session.metadata.exitCode = 1;
+      session.metadata.failureDetails = error instanceof Error ? error.message : String(error);
+    }
+    this.emitSession(session.metadata);
   }
 
   private spawnProcess(
     id: string,
     provider: ProviderId,
     profile: CreateSessionRequest["profile"],
-    cwd: string
+    cwd: string,
+    cols = INITIAL_TERMINAL_COLS,
+    rows = INITIAL_TERMINAL_ROWS,
+    resumePrevious = false
   ): {
     process: IPty | null;
     agentBrowser: PreparedAgentBrowserPtyLaunch | null;
@@ -278,13 +536,14 @@ export class TerminalManager {
       const providerArgs = [...(agentRuntime?.args ?? []), ...(agentBrowser?.args ?? [])];
       const launch = resolveTerminalLaunch(provider, profile, providerArgs, {
         environment: { ...baseEnvironment, ...providerEnvironment },
-        ...(providerCli ? { providerCli } : {})
+        ...(providerCli ? { providerCli } : {}),
+        resumePrevious
       });
       return {
-        process: pty.spawn(launch.command, launch.args, {
+        process: this.spawnPty(launch.command, launch.args, {
           name: "xterm-256color",
-          cols: 100,
-          rows: 30,
+          cols,
+          rows,
           cwd,
           env: { ...baseEnvironment, ...providerEnvironment, ...launch.environment }
         }),
@@ -363,7 +622,11 @@ export function terminalEnvironment(
   ]);
   const environment = Object.fromEntries(
     Object.entries(source).filter((entry): entry is [string, string] => (
-      typeof entry[1] === "string" && !reserved.has(entry[0])
+      typeof entry[1] === "string"
+      && !reserved.has(entry[0])
+      && !entry[0].startsWith("CANVASTTY_PLUGIN_HOOK_")
+      && entry[0] !== "CANVASTTY_LIFECYCLE_HOOKS_ENABLED"
+      && entry[0] !== "ELECTRON_RUN_AS_NODE"
     ))
   );
   return { ...environment, TERM: "xterm-256color", COLORTERM: "truecolor" };

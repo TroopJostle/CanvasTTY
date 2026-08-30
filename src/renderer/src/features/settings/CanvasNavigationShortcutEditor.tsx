@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LocaleId } from "../../../../shared/contracts";
 import {
   activeCanvasNavigationModifiers,
+  canvasNavigationMouseButtonFromDomButton,
   canvasOverrideBindingConflicts,
   canvasNavigationModifierFromKey,
   formatCanvasNavigationBinding,
@@ -143,6 +144,22 @@ export function CanvasNavigationShortcutEditor({
     void save(null);
   };
 
+  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>): void => {
+    if (!capturing) return;
+    const button = canvasNavigationMouseButtonFromDomButton(event.button);
+    if (button === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    for (const eventModifier of activeCanvasNavigationModifiers(event)) {
+      modifiersRef.current.add(eventModifier);
+    }
+    setPreview(displayCanvasNavigationBinding(
+      formatCanvasNavigationBinding({ modifiers: [...modifiersRef.current], key: button }),
+      isMacOS
+    ));
+    void save(button);
+  };
+
   return (
     <>
       <div className="shortcut-editor">
@@ -161,6 +178,12 @@ export function CanvasNavigationShortcutEditor({
               }}
               onKeyDown={handleKeyDown}
               onKeyUp={handleKeyUp}
+              onPointerDown={handlePointerDown}
+              onAuxClick={(event) => {
+                if (!capturing || canvasNavigationMouseButtonFromDomButton(event.button) === null) return;
+                event.preventDefault();
+                event.stopPropagation();
+              }}
             >
               {capturing
                 ? (preview ?? "…")

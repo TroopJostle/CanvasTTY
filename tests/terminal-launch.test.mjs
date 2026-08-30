@@ -60,6 +60,27 @@ test("Claude keeps launch-scoped adapter arguments in their supplied order", () 
   assert.deepEqual(launch.args, ["--mcp-config", "{}"]);
 });
 
+test("restored agent windows use each provider's native continue mode", () => {
+  const codex = resolveTerminalLaunch("codex", "yolo", ["--bridge"], {
+    providerCli: available("codex", "/resolved/codex"),
+    resumePrevious: true
+  });
+  assert.deepEqual(codex.args, [
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--bridge",
+    "resume",
+    "--last"
+  ]);
+
+  for (const provider of ["claude", "qwen", "kimi", "opencode", "hermes", "grok"]) {
+    const launch = resolveTerminalLaunch(provider, "normal", ["--bridge"], {
+      providerCli: available(provider, `/resolved/${provider}`),
+      resumePrevious: true
+    });
+    assert.deepEqual(launch.args, ["--bridge", "--continue"]);
+  }
+});
+
 test("OpenCode merges YOLO config with the registry child environment", () => {
   const providerCli = available("opencode", "/test-home/.local/bin/opencode");
   const launch = resolveTerminalLaunch("opencode", "yolo", [], {

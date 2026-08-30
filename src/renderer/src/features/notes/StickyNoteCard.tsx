@@ -2,18 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import type { LocaleId, Point, SessionBounds, StickyNote } from "../../../../shared/contracts";
 import { UiIcon } from "../../components/UiIcon";
 import { t } from "../../lib/i18n";
-import { snapMove, type ResizeDirection } from "../workspace/snap";
-import { constrainStickyNoteResize } from "./stickyNoteBounds";
+import { snapMove, snapResize, type ResizeDirection } from "../workspace/snap";
+import {
+  constrainStickyNoteResize,
+  MAX_STICKY_NOTE_SIZE,
+  MIN_STICKY_NOTE_SIZE
+} from "./stickyNoteBounds";
 
 interface StickyNoteCardProps {
   note: StickyNote;
   locale: LocaleId;
   zoom: number;
+  stackIndex: number;
+  editRequest: number;
   snapEnabled: boolean;
   snapTargets: readonly SessionBounds[];
   onBoundsChange(id: string, bounds: SessionBounds): void;
   onTextChange(id: string, text: string): void;
-  onDispose(id: string): void;
 }
 
 interface DragState {
@@ -28,24 +33,31 @@ interface ResizeState extends DragState {
 
 const RESIZE_DIRECTIONS: ResizeDirection[] = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
 
+// Interaction behavior is adapted from @TroopJostle's StickyNoteCard in PR #23.
 export function StickyNoteCard({
   note,
   locale,
   zoom,
+  stackIndex,
+  editRequest,
   snapEnabled,
   snapTargets,
   onBoundsChange,
-  onTextChange,
-  onDispose
+  onTextChange
 }: StickyNoteCardProps): React.JSX.Element {
+  const editor = useRef<HTMLTextAreaElement>(null);
   const dragState = useRef<DragState | null>(null);
   const resizeState = useRef<ResizeState | null>(null);
   const textSaveTimer = useRef<number | null>(null);
+  const persistedText = useRef(note.text);
+  const pendingText = useRef(note.text);
+  const onTextChangeRef = useRef(onTextChange);
   const initialBounds = { position: note.position, size: note.size };
   const liveBounds = useRef<SessionBounds>(initialBounds);
   const [position, setPosition] = useState(note.position);
   const [size, setSize] = useState(note.size);
   const [text, setText] = useState(note.text);
+  onTextChangeRef.current = onTextChange;
 
   useEffect(() => {
     const bounds = { position: note.position, size: note.size };
@@ -54,19 +66,40 @@ export function StickyNoteCard({
     setSize(bounds.size);
   }, [note.position, note.size]);
 
-  useEffect(() => setText(note.text), [note.text]);
+  useEffect(() => {
+    persistedText.current = note.text;
+    pendingText.current = note.text;
+    setText(note.text);
+  }, [note.text]);
+
+  useEffect(() => {
+    if (editRequest <= 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = editor.current;
+      if (!element) return;
+      element.focus({ preventScroll: true });
+      element.setSelectionRange(element.value.length, element.value.length);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editRequest]);
 
   useEffect(() => () => {
     if (textSaveTimer.current !== null) window.clearTimeout(textSaveTimer.current);
-  }, []);
+    if (pendingText.current !== persistedText.current) {
+      onTextChangeRef.current(note.id, pendingText.current);
+    }
+  }, [note.id]);
 
   const saveText = (nextText: string): void => {
     if (textSaveTimer.current !== null) window.clearTimeout(textSaveTimer.current);
     textSaveTimer.current = null;
-    if (nextText !== note.text) onTextChange(note.id, nextText);
+    if (nextText === persistedText.current) return;
+    persistedText.current = nextText;
+    onTextChangeRef.current(note.id, nextText);
   };
 
   const changeText = (nextText: string): void => {
+    pendingText.current = nextText;
     setText(nextText);
     if (textSaveTimer.current !== null) window.clearTimeout(textSaveTimer.current);
     textSaveTimer.current = window.setTimeout(() => saveText(nextText), 400);
@@ -79,7 +112,9 @@ export function StickyNoteCard({
   };
 
   const startDrag = (event: React.PointerEvent<HTMLElement>): void => {
-    if ((event.target as HTMLElement).closest("button")) return;
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button, input, textarea")) return;
+    event.preventDefault();
+    event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     dragState.current = {
       pointerId: event.pointerId,
@@ -103,11 +138,14 @@ export function StickyNoteCard({
 
   const endDrag = (event: React.PointerEvent<HTMLElement>): void => {
     if (dragState.current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
     dragState.current = null;
     onBoundsChange(note.id, liveBounds.current);
   };
 
   const startResize = (event: React.PointerEvent<HTMLDivElement>, direction: ResizeDirection): void => {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -126,7 +164,7 @@ export function StickyNoteCard({
     event.stopPropagation();
     const deltaX = (event.clientX - state.startClient.x) / zoom;
     const deltaY = (event.clientY - state.startClient.y) / zoom;
-    applyBounds(constrainStickyNoteResize({
+    const constrained = constrainStickyNoteResize({
       position: {
         x: state.startBounds.position.x + (state.direction.includes("w") ? deltaX : 0),
         y: state.startBounds.position.y + (state.direction.includes("n") ? deltaY : 0)
@@ -139,7 +177,13 @@ export function StickyNoteCard({
           + (state.direction.includes("s") ? deltaY : 0)
           - (state.direction.includes("n") ? deltaY : 0)
       }
-    }, state.direction));
+    }, state.direction);
+    applyBounds(snapEnabled
+      ? snapResize(constrained, state.direction, snapTargets, {
+          min: MIN_STICKY_NOTE_SIZE,
+          max: MAX_STICKY_NOTE_SIZE
+        })
+      : constrained);
   };
 
   const endResize = (event: React.PointerEvent<HTMLDivElement>): void => {
@@ -154,9 +198,11 @@ export function StickyNoteCard({
     <article
       className="sticky-note-card"
       data-interactive="true"
-      data-canvas-widget-id={`sticky-note:${note.id}`}
+      data-sticky-note-id={note.id}
+      data-canvas-layer-id={`note:${note.id}`}
       data-wheel-owner="local"
       style={{
+        zIndex: stackIndex,
         width: size.width,
         height: size.height,
         transform: `translate(${position.x}px, ${position.y}px)`
@@ -169,12 +215,10 @@ export function StickyNoteCard({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
       >
-        <span>{t(locale, "stickyNote")}</span>
-        <button type="button" onClick={() => onDispose(note.id)} title={t(locale, "removeStickyNote")} aria-label={t(locale, "removeStickyNote")}>
-          <UiIcon name="close" size={15} />
-        </button>
+        <span><UiIcon name="sticky-note" size="1.15em" />{t(locale, "stickyNote")}</span>
       </header>
       <textarea
+        ref={editor}
         className="sticky-note-card__editor"
         value={text}
         maxLength={20_000}

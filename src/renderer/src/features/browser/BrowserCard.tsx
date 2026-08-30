@@ -27,6 +27,8 @@ interface BrowserCardProps {
   zoom: number;
   camera: CameraState;
   visible: boolean;
+  stackIndex: number;
+  uiScale: number;
   snapEnabled: boolean;
   focusActivation: FocusActivation;
   focused: boolean;
@@ -63,6 +65,8 @@ export function BrowserCard({
   zoom,
   camera,
   visible,
+  stackIndex,
+  uiScale,
   snapEnabled,
   focusActivation,
   focused,
@@ -366,6 +370,7 @@ export function BrowserCard({
     <article
       className={`browser-card ${summaryMode ? "browser-card--summary" : ""} ${selected ? "browser-card--selected" : ""}`}
       data-interactive="true"
+      data-canvas-layer-id="browser"
       data-canvas-widget-id={browserCanvasWidgetId}
       data-canvas-widget-focusable="true"
       data-canvas-zoom-surface="application"
@@ -383,6 +388,7 @@ export function BrowserCard({
       style={{
         width: size.width,
         height: size.height,
+        zIndex: stackIndex,
         transform: `translate(${position.x}px, ${position.y}px)`,
         "--summary-scale": summaryScale,
         "--summary-content-width": `${Math.max(0, (size.width - 48) / summaryScale)}px`
@@ -396,14 +402,14 @@ export function BrowserCard({
         onPointerCancel={endDrag}
       >
         <span className="browser-card__title">
-          <UiIcon name="browser" size={22} />
+          <UiIcon name="browser" size="1.69em" />
           <span>
             <strong>{t(locale, "browser")}</strong>
             <small title={activeTab?.title}>{activeTab?.title || t(locale, "newTab")}</small>
           </span>
         </span>
         <button className="browser-card__hide" type="button" onClick={onClose} title={t(locale, "hideBrowser")} aria-label={t(locale, "hideBrowser")}>
-          <UiIcon name="close" size={16} />
+          <UiIcon name="close" size="1.23em" />
         </button>
       </header>
 
@@ -542,7 +548,9 @@ export function BrowserCard({
         </span>
       </button>
 
-      {summaryMode && showAgentPresence && <AgentCursorLayer agents={activeAgents} width={size.width} height={size.height - 54} />}
+      {summaryMode && showAgentPresence && (
+        <AgentCursorLayer agents={activeAgents} width={size.width} height={size.height - 54 * uiScale} />
+      )}
 
       {panel === "downloads" && (
         <section className="browser-card__popover browser-card__download-panel" data-browser-action="true" data-wheel-owner="local">

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import {
+  INITIAL_TERMINAL_COLS,
+  INITIAL_TERMINAL_ROWS
+} from "../../../../shared/contracts";
 import type {
   LocaleId,
   PaletteId,
@@ -37,6 +41,7 @@ interface TerminalCardProps {
   locale: LocaleId;
   palette: PaletteId;
   zoom: number;
+  stackIndex: number;
   snapEnabled: boolean;
   focusActivation: FocusActivation;
   invertTerminalWheel: boolean;
@@ -74,6 +79,7 @@ export function TerminalCard({
   locale,
   palette,
   zoom,
+  stackIndex,
   snapEnabled,
   focusActivation,
   invertTerminalWheel,
@@ -137,6 +143,8 @@ export function TerminalCard({
     if (!host) return;
 
     const terminal = new Terminal({
+      cols: INITIAL_TERMINAL_COLS,
+      rows: INITIAL_TERMINAL_ROWS,
       cursorBlink: true,
       cursorStyle: "block",
       fontFamily: '"JetBrains Mono", "Cascadia Code", monospace',
@@ -149,6 +157,29 @@ export function TerminalCard({
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(host);
+    let lastReportedGrid = "";
+    const reportGrid = (cols: number, rows: number): void => {
+      const grid = `${cols}x${rows}`;
+      if (grid === lastReportedGrid) return;
+      lastReportedGrid = grid;
+      window.canvasTTY.terminal.resize(session.id, cols, rows);
+    };
+    const resize = terminal.onResize(({ cols, rows }) => reportGrid(cols, rows));
+    let replayingSnapshot = true;
+    const queuedLiveOutput: string[] = [];
+    const unsubscribe = window.canvasTTY.terminal.onData((event) => {
+      if (event.id !== session.id) return;
+      if (replayingSnapshot) queuedLiveOutput.push(event.data);
+      else terminal.write(event.data);
+    });
+    const fit = (): void => {
+      try {
+        fitTerminalPreservingViewport(terminal, () => fitAddon.fit());
+        reportGrid(terminal.cols, terminal.rows);
+      } catch {
+        // A hidden semantic-zoom surface has no measurable rows yet.
+      }
+    };
     terminal.attachCustomKeyEventHandler((event) => {
       if (shouldRestartExitedTerminal(event, sessionExited.current)) {
         event.preventDefault();
@@ -197,15 +228,12 @@ export function TerminalCard({
       )
       : () => undefined;
     terminalRef.current = terminal;
+    fit();
     if (session.buffer) terminal.write(session.buffer);
+    replayingSnapshot = false;
+    for (const data of queuedLiveOutput) terminal.write(data);
+    queuedLiveOutput.length = 0;
 
-    const fit = (): void => {
-      try {
-        fitTerminalPreservingViewport(terminal, () => fitAddon.fit());
-      } catch {
-        // A hidden semantic-zoom surface has no measurable rows yet.
-      }
-    };
     const frame = requestAnimationFrame(fit);
     const resizeObserver = new ResizeObserver(fit);
     resizeObserver.observe(host);
@@ -215,11 +243,6 @@ export function TerminalCard({
       if (suppressFocusReport.current && (data === TERMINAL_FOCUS_IN || data === TERMINAL_FOCUS_OUT)) return;
       window.canvasTTY.terminal.input(session.id, data);
     });
-    const resize = terminal.onResize(({ cols, rows }) => window.canvasTTY.terminal.resize(session.id, cols, rows));
-    const unsubscribe = window.canvasTTY.terminal.onData((event) => {
-      if (event.id === session.id) terminal.write(event.data);
-    });
-
     return () => {
       cancelAnimationFrame(frame);
       detachMouseCoordinateAdapter();
@@ -376,8 +399,9 @@ export function TerminalCard({
 
   return (
     <article
-      className={`terminal-card ${summaryMode ? "terminal-card--summary" : ""} ${selected ? "terminal-card--selected" : ""}`}
+      className={`terminal-card terminal-card--${session.provider} ${summaryMode ? "terminal-card--summary" : ""} ${selected ? "terminal-card--selected" : ""}`}
       data-interactive="true"
+      data-canvas-layer-id={`terminal:${session.id}`}
       data-canvas-widget-id={terminalCanvasWidgetId(session.id)}
       data-canvas-widget-focusable="true"
       data-canvas-zoom-surface="application"
@@ -394,6 +418,7 @@ export function TerminalCard({
       style={{
         width: size.width,
         height: size.height,
+        zIndex: stackIndex,
         transform: `translate(${position.x}px, ${position.y}px)`,
         "--summary-scale": summaryScale,
         "--summary-content-width": `${Math.max(0, (size.width - 72) / summaryScale)}px`,
@@ -447,10 +472,10 @@ export function TerminalCard({
               title={`${t(locale, "restartSession")} · Ctrl+D`}
               aria-label={t(locale, "restartSession")}
             >
-              <UiIcon name={restarting ? "working" : "reload"} size={16} />
+              <UiIcon name={restarting ? "working" : "reload"} size="1.23em" />
             </button>
           )}
-          <button className="terminal-card__action terminal-card__action--close" type="button" onClick={() => onDispose(session.id)} title={t(locale, "close")} aria-label={t(locale, "close")}><UiIcon name="close" size={16} /></button>
+          <button className="terminal-card__action terminal-card__action--close" type="button" onClick={() => onDispose(session.id)} title={t(locale, "close")} aria-label={t(locale, "close")}><UiIcon name="close" size="1.23em" /></button>
         </div>
       </header>
       <div className="terminal-card__surface" ref={terminalHost} />

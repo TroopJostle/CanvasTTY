@@ -545,6 +545,7 @@ export function PluginSettingsSection({
               {renderInstalledHostTag(manifest.minHostVersion)}
               <p className="plugin-showcase-tile__description">{manifestDescription(manifest, locale)}</p>
               <PermissionList permissions={manifest.permissions} locale={locale} />
+              <HookManifestWarning manifest={manifest} locale={locale} />
               <ModuleList
                 modules={manifest.modules ?? []}
                 selected={modules}
@@ -619,6 +620,7 @@ export function PluginSettingsSection({
             </header>
             <p>{manifestDescription(preview.manifest, locale)}</p>
             <PermissionList permissions={preview.manifest.permissions} locale={locale} />
+            <HookManifestWarning manifest={preview.manifest} locale={locale} showEntries />
             <ModuleList
               modules={preview.manifest.modules ?? []}
               selected={selectedModules}
@@ -748,6 +750,7 @@ export function PluginSettingsSection({
                     )}
                     <p>{manifestDescription(plugin.manifest, locale)}</p>
                     <PermissionList permissions={plugin.manifest.permissions} locale={locale} />
+                    <HookManifestWarning manifest={plugin.manifest} locale={locale} showEntries />
                     <ModuleList
                       modules={plugin.manifest.modules ?? []}
                       selected={plugin.selectedModules}
@@ -1001,6 +1004,34 @@ function PermissionList({ permissions, locale }: { permissions: PluginPermission
       {permissions.length === 0
         ? <span>{t(locale, "pluginNoPermissions")}</span>
         : <ul>{permissions.map((permission) => <li key={permission}>{t(locale, permissionKey(permission))}</li>)}</ul>}
+    </div>
+  );
+}
+
+function HookManifestWarning({
+  manifest,
+  locale,
+  showEntries = false
+}: {
+  manifest: PluginManifest;
+  locale: LocaleId;
+  showEntries?: boolean;
+}): React.JSX.Element | null {
+  if (!manifest.hooks?.length) return null;
+  return (
+    <div className="plugin-hook-warning" role="note">
+      <strong>{t(locale, "pluginHooksIncluded")} · {manifest.hooks.length}</strong>
+      <span>{t(locale, "pluginHooksInstallWarning")}</span>
+      {showEntries && (
+        <ul>
+          {manifest.hooks.map((hook) => (
+            <li key={hook.id}>
+              <strong>{hook.title}</strong>
+              <code>{hook.entry}</code>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

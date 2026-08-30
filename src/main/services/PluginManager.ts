@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import {
+  chmod,
   lstat,
   copyFile,
   mkdir,
@@ -13,10 +14,13 @@ import {
   stat,
   writeFile
 } from "node:fs/promises";
-import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
+  AgentProviderId,
   GithubPluginSearchResult,
   InstalledPlugin,
+  PluginAgentHook,
+  PluginAgentHookEvent,
   PluginContribution,
   PluginInstallPreview,
   PluginManifest,
@@ -52,6 +56,7 @@ const ICON_CANDIDATES = [
   "assets/icon.svg"
 ];
 const REGISTRY_FILE = "plugins.json";
+const RUNTIME_HOOK_REGISTRY_FILE = "plugin-hooks.json";
 const VERSIONS_FILE = "plugin-versions.json";
 const SEARCH_MAX_RESULTS = 10;
 const SEARCH_TIMEOUT_MS = 15_000;
@@ -64,8 +69,21 @@ const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
 const MAX_ASSET_BYTES = 8 * 1024 * 1024;
 const MAX_STORAGE_BYTES = 64 * 1024;
 const MAX_MANIFEST_BYTES = 128 * 1024;
+const MAX_RUNTIME_HOOK_REGISTRY_BYTES = 1024 * 1024;
 const MAX_PLUGIN_ICON_BYTES = 512 * 1024;
 const PLUGIN_INPUT_BRIDGE_URL = "canvastty-plugin://host/input-bridge.js";
+const AGENT_PROVIDERS = new Set<AgentProviderId>([
+  "codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"
+]);
+const PLUGIN_HOOK_EVENTS = new Set<PluginAgentHookEvent>([
+  "session-start",
+  "prompt-submit",
+  "permission-request",
+  "permission-result",
+  "after-tool",
+  "stop",
+  "session-end"
+]);
 
 export function injectPluginInputBridge(html: string): string {
   if (html.includes(PLUGIN_INPUT_BRIDGE_URL)) return html;
@@ -96,6 +114,26 @@ interface StoredPluginRecord {
   enabled: boolean;
   installedAt: number;
   selectedModules?: string[];
+  enabledHooks?: string[];
+}
+
+export interface RuntimePluginHookRegistration {
+  key: string;
+  events: PluginAgentHookEvent[];
+}
+
+interface RuntimeHookRecord {
+  pluginId: string;
+  hookId: string;
+  root: string;
+  entry: string;
+  providers: AgentProviderId[];
+  events: PluginAgentHookEvent[];
+}
+
+interface RuntimeHookRegistry {
+  version: 1;
+  hooks: Record<string, RuntimeHookRecord>;
 }
 
 interface StoredVersionRecord {
@@ -123,6 +161,7 @@ export class PluginManager {
   private readonly storageRoot: string;
   private readonly registryPath: string;
   private readonly versionsPath: string;
+  private readonly hookRegistryPath: string;
   private readonly plugins = new Map<string, InstalledPlugin>();
   private readonly pending = new Map<string, PendingInstall>();
   private readonly storageWrites = new Map<string, Promise<void>>();
@@ -143,6 +182,7 @@ export class PluginManager {
     this.storageRoot = join(userDataPath, "plugin-storage");
     this.registryPath = join(userDataPath, REGISTRY_FILE);
     this.versionsPath = join(userDataPath, VERSIONS_FILE);
+    this.hookRegistryPath = join(userDataPath, "lifecycle", RUNTIME_HOOK_REGISTRY_FILE);
     this.downloadRepository = downloadRepository ?? downloadGithubManifest;
     this.downloadFullRepository = downloadRepository ?? downloadGithubRepository;
     this.downloadModuleFiles = downloadModuleFiles;
@@ -182,6 +222,7 @@ export class PluginManager {
         console.warn("CanvasTTY plugin registry could not be loaded; invalid entries are ignored.", error);
       }
     }
+    const persistedRuntimeHooks = await readRuntimeHookRegistry(this.hookRegistryPath);
 
     this.plugins.clear();
     for (const [pluginId, record] of Object.entries(registry)) {
@@ -189,12 +230,24 @@ export class PluginManager {
       try {
         const manifest = await readManifest(join(this.pluginRoot, pluginId));
         if (manifest.id !== pluginId) continue;
+        const selectedModules = normalizeSelectedModules(manifest, record.selectedModules);
+        const active = activeManifest(manifest, selectedModules);
         this.plugins.set(pluginId, {
           manifest,
           sourceUrl: normalizeGithubUrl(record.sourceUrl),
           enabled: record.enabled,
           installedAt: record.installedAt,
-          selectedModules: normalizeSelectedModules(manifest, record.selectedModules)
+          selectedModules,
+          enabledHooks: record.enabled
+            ? normalizeEnabledHooks(manifest, record.enabledHooks, selectedModules).filter((hookId) => (
+              runtimeHookTrustMatches(
+                persistedRuntimeHooks,
+                join(this.pluginRoot, pluginId),
+                pluginId,
+                active.hooks?.find((hook) => hook.id === hookId)
+              )
+            ))
+            : []
         });
       } catch (error) {
         console.warn(`CanvasTTY plugin ${pluginId} could not be loaded.`, error);
@@ -229,7 +282,7 @@ export class PluginManager {
         assertModularContributionFiles(manifest);
       } else {
         try {
-          await assertContributionAssets(packageRoot, manifest.contributions);
+          await assertManifestAssets(packageRoot, manifest);
         } catch {
           await rm(packageRoot, { recursive: true, force: true });
           await this.downloadFullRepository(canonicalUrl, packageRoot);
@@ -239,7 +292,7 @@ export class PluginManager {
             throw new Error("Plugin manifest changed while its package was downloaded.");
           }
           manifest = downloadedManifest;
-          await assertContributionAssets(packageRoot, manifest.contributions);
+          await assertManifestAssets(packageRoot, manifest);
         }
       }
 
@@ -293,7 +346,8 @@ export class PluginManager {
         sourceUrl: preview.sourceUrl,
         enabled: true,
         installedAt: Date.now(),
-        selectedModules: modules
+        selectedModules: modules,
+        enabledHooks: []
       };
       this.plugins.set(installed.manifest.id, installed);
       await this.persistRegistry();
@@ -309,9 +363,63 @@ export class PluginManager {
 
   async setEnabled(pluginId: string, enabled: boolean): Promise<InstalledPlugin> {
     const plugin = this.requirePlugin(pluginId);
+    const wasEnabled = plugin.enabled;
+    const previousEnabledHooks = [...plugin.enabledHooks];
     plugin.enabled = Boolean(enabled);
-    await this.persistRegistry();
+    if (!plugin.enabled || !wasEnabled) plugin.enabledHooks = [];
+    try {
+      await this.persistRegistry();
+    } catch (error) {
+      if (plugin.enabled) {
+        plugin.enabled = wasEnabled;
+        plugin.enabledHooks = previousEnabledHooks;
+      }
+      await this.persistRegistry().catch(() => undefined);
+      throw error;
+    }
     return structuredClone(activePlugin(plugin));
+  }
+
+  async setHookEnabled(pluginId: string, hookId: string, enabled: boolean): Promise<InstalledPlugin> {
+    const plugin = this.requireEnabledPlugin(pluginId);
+    if (!isContributionId(hookId)) throw new Error("Plugin hook identifier is invalid.");
+    const hook = activeManifest(plugin.manifest, plugin.selectedModules).hooks?.find((candidate) => candidate.id === hookId);
+    if (!hook) throw new Error("Plugin hook is not installed or its module is disabled.");
+    const previous = [...plugin.enabledHooks];
+    const selected = new Set(previous);
+    if (enabled) selected.add(hook.id);
+    else selected.delete(hook.id);
+    plugin.enabledHooks = [...selected].filter((id) => (
+      activeManifest(plugin.manifest, plugin.selectedModules).hooks?.some((candidate) => candidate.id === id)
+    ));
+    try {
+      await this.persistRegistry();
+    } catch (error) {
+      if (enabled) plugin.enabledHooks = previous;
+      await this.persistRegistry().catch(() => undefined);
+      throw error;
+    }
+    return structuredClone(activePlugin(plugin));
+  }
+
+  get runtimeHookRegistryPath(): string {
+    return this.hookRegistryPath;
+  }
+
+  runtimeHooksForProvider(provider: AgentProviderId): RuntimePluginHookRegistration[] {
+    const registrations: RuntimePluginHookRegistration[] = [];
+    for (const plugin of this.plugins.values()) {
+      if (!plugin.enabled || plugin.enabledHooks.length === 0) continue;
+      const manifest = activeManifest(plugin.manifest, plugin.selectedModules);
+      for (const hook of manifest.hooks ?? []) {
+        if (!plugin.enabledHooks.includes(hook.id) || !hook.providers.includes(provider)) continue;
+        registrations.push({
+          key: runtimeHookKey(plugin.manifest.id, hook.id),
+          events: [...hook.events]
+        });
+      }
+    }
+    return registrations;
   }
 
   async setModules(pluginId: string, selectedModules: string[]): Promise<InstalledPlugin> {
@@ -319,11 +427,16 @@ export class PluginManager {
     if (!plugin.manifest.modules?.length) throw new Error("Plugin does not declare optional modules.");
     const selected = normalizeSelectedModules(plugin.manifest, selectedModules);
     if (selected.length !== new Set(selectedModules).size) throw new Error("Plugin module selection is invalid.");
+    if (plugin.enabledHooks.length > 0) {
+      plugin.enabledHooks = [];
+      await this.persistRegistry();
+    }
     const directory = await mkdtemp(join(this.stagingRoot, "modules-"));
     const nextRoot = join(directory, "next");
     const currentRoot = join(this.pluginRoot, pluginId);
     const backupRoot = join(directory, "previous");
     const previousSelection = [...plugin.selectedModules];
+    const previousEnabledHooks = [...plugin.enabledHooks];
     let swapped = false;
     try {
       await materializeModularPackage(
@@ -343,11 +456,14 @@ export class PluginManager {
         throw error;
       }
       plugin.selectedModules = selected;
+      // Module replacement downloads executable hook files again, so trust must be renewed.
+      plugin.enabledHooks = [];
       await this.persistRegistry();
       return structuredClone(activePlugin(plugin));
     } catch (error) {
       if (swapped) {
         plugin.selectedModules = previousSelection;
+        plugin.enabledHooks = previousEnabledHooks;
         await rm(currentRoot, { recursive: true, force: true });
         await rename(backupRoot, currentRoot);
         await this.persistRegistry().catch(() => undefined);
@@ -360,8 +476,23 @@ export class PluginManager {
 
   async uninstall(pluginId: string): Promise<void> {
     const plugin = this.requirePlugin(pluginId);
+    if (plugin.enabledHooks.length > 0) {
+      plugin.enabledHooks = [];
+      try {
+        await this.persistRegistry();
+      } catch (error) {
+        await this.persistRegistry().catch(() => undefined);
+        throw error;
+      }
+    }
     this.plugins.delete(plugin.manifest.id);
-    await this.persistRegistry();
+    try {
+      await this.persistRegistry();
+    } catch (error) {
+      this.plugins.set(plugin.manifest.id, plugin);
+      await this.persistRegistry().catch(() => undefined);
+      throw error;
+    }
     await rm(join(this.pluginRoot, plugin.manifest.id), { recursive: true, force: true });
     await rm(join(this.storageRoot, `${plugin.manifest.id}.json`), { force: true });
   }
@@ -542,6 +673,10 @@ export class PluginManager {
 
   async updatePlugin(pluginId: string): Promise<InstalledPlugin> {
     const plugin = this.requirePlugin(pluginId);
+    if (plugin.enabledHooks.length > 0) {
+      plugin.enabledHooks = [];
+      await this.persistRegistry();
+    }
     const sourceUrl = plugin.sourceUrl;
     const previousSelection = [...plugin.selectedModules];
     const directory = await mkdtemp(join(this.stagingRoot, "update-"));
@@ -561,6 +696,7 @@ export class PluginManager {
       if (manifest.modules?.length) {
         await materializeModularPackage(sourceUrl, packageRoot, nextRoot, manifest, selected, this.downloadModuleFiles);
       } else {
+        await assertManifestAssets(packageRoot, manifest);
         await rename(packageRoot, nextRoot);
       }
 
@@ -580,7 +716,9 @@ export class PluginManager {
         sourceUrl,
         enabled: plugin.enabled,
         installedAt: plugin.installedAt,
-        selectedModules: selected
+        selectedModules: selected,
+        // Updated native hook code must be reviewed and trusted again.
+        enabledHooks: []
       };
       this.plugins.set(pluginId, updated);
       await this.persistRegistry();
@@ -781,17 +919,51 @@ export class PluginManager {
       sourceUrl: plugin.sourceUrl,
       enabled: plugin.enabled,
       installedAt: plugin.installedAt,
-      selectedModules: plugin.selectedModules
+      selectedModules: plugin.selectedModules,
+      enabledHooks: plugin.enabledHooks
     }] satisfies [string, StoredPluginRecord]));
     const snapshot = JSON.stringify(registry, null, 2);
+    const desiredHookRegistry = this.runtimeHookRegistry();
+    const hookSnapshot = JSON.stringify(desiredHookRegistry, null, 2);
+    if (Buffer.byteLength(hookSnapshot, "utf8") > MAX_RUNTIME_HOOK_REGISTRY_BYTES) {
+      throw new Error("Enabled plugin hooks exceed the runtime registry limit.");
+    }
     const temporaryPath = `${this.registryPath}.tmp`;
     const write = this.registryWrite.catch(() => undefined).then(async () => {
+      const currentHookRegistry = await readRuntimeHookRegistry(this.hookRegistryPath);
+      const interimHookRegistry = safeRuntimeHookInterim(currentHookRegistry, desiredHookRegistry);
+      const interimHookSnapshot = JSON.stringify(interimHookRegistry, null, 2);
+
       await mkdir(dirname(this.registryPath), { recursive: true });
+      // Revocations and executable replacements become authoritative before the
+      // user-visible registry changes. New executable grants are withheld until
+      // that registry is durable, so a partial write can only fail closed.
+      await writeRuntimeHookRegistry(this.hookRegistryPath, interimHookSnapshot);
       await writeFile(temporaryPath, snapshot, "utf8");
       await rename(temporaryPath, this.registryPath);
+      if (interimHookSnapshot !== hookSnapshot) {
+        await writeRuntimeHookRegistry(this.hookRegistryPath, hookSnapshot);
+      }
     });
     this.registryWrite = write;
     return write;
+  }
+
+  private runtimeHookRegistry(): RuntimeHookRegistry {
+    const hooks: Record<string, RuntimeHookRecord> = {};
+    for (const plugin of this.plugins.values()) {
+      if (!plugin.enabled || plugin.enabledHooks.length === 0) continue;
+      const manifest = activeManifest(plugin.manifest, plugin.selectedModules);
+      for (const hook of manifest.hooks ?? []) {
+        if (!plugin.enabledHooks.includes(hook.id)) continue;
+        hooks[runtimeHookKey(plugin.manifest.id, hook.id)] = runtimeHookRecord(
+          join(this.pluginRoot, plugin.manifest.id),
+          plugin.manifest.id,
+          hook
+        );
+      }
+    }
+    return { version: 1, hooks };
   }
 }
 
@@ -836,7 +1008,7 @@ export function validatePluginManifest(candidate: unknown): PluginManifest {
   assertOnlyKeys(candidate, [
     "apiVersion", "id", "name", "version", "description", "description.ru", "description.en",
     "icon", "author", "homepage", "settingsContribution", "coreFiles", "modules", "permissions",
-    "contributions", "platforms", "minHostVersion"
+    "contributions", "hooks", "platforms", "minHostVersion"
   ], "Plugin manifest");
   if (candidate.apiVersion !== PLUGIN_API_VERSION) {
     throw new Error(`Plugin apiVersion must be ${PLUGIN_API_VERSION}.`);
@@ -890,6 +1062,7 @@ export function validatePluginManifest(candidate: unknown): PluginManifest {
 
   const modules = validateModules(candidate.modules);
   const moduleIds = new Set(modules.map((module) => module.id));
+  const hooks = validateAgentHooks(candidate.hooks, moduleIds);
   const coreFiles = candidate.coreFiles === undefined ? [] : validateModuleFiles(candidate.coreFiles, "coreFiles");
   if (modules.length > 0 && coreFiles.length === 0) {
     throw new Error("Modular plugins must declare at least one coreFiles asset.");
@@ -902,8 +1075,11 @@ export function validatePluginManifest(candidate: unknown): PluginManifest {
     }
   }
 
-  if (!Array.isArray(candidate.contributions) || candidate.contributions.length === 0 || candidate.contributions.length > 32) {
-    throw new Error("Plugin must declare between 1 and 32 contributions.");
+  if (!Array.isArray(candidate.contributions) || candidate.contributions.length > 32) {
+    throw new Error("Plugin contributions must be an array of at most 32 items.");
+  }
+  if (candidate.contributions.length === 0 && hooks.length === 0) {
+    throw new Error("Plugin must declare at least one contribution or agent hook.");
   }
   const contributionIds = new Set<string>();
   const contributions = candidate.contributions.map((value) => {
@@ -938,10 +1114,73 @@ export function validatePluginManifest(candidate: unknown): PluginManifest {
     ...(minHostVersion ? { minHostVersion } : {}),
     permissions,
     contributions,
+    ...(hooks.length ? { hooks } : {}),
     ...(settingsContribution ? { settingsContribution } : {}),
     ...(coreFiles.length ? { coreFiles } : {}),
     ...(modules.length ? { modules } : {})
   };
+}
+
+function validateAgentHooks(value: unknown, moduleIds: ReadonlySet<string>): PluginAgentHook[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length === 0 || value.length > 16) {
+    throw new Error("Plugin hooks must contain between 1 and 16 items.");
+  }
+  const ids = new Set<string>();
+  return value.map((candidate) => {
+    if (!isRecord(candidate)) throw new Error("Every plugin hook must be an object.");
+    assertOnlyKeys(candidate, [
+      "id", "title", "description", "entry", "providers", "events", "module"
+    ], "Plugin hook");
+    const id = requiredString(candidate.id, "hook id", 64);
+    if (!isContributionId(id) || ids.has(id)) throw new Error(`Plugin hook id is invalid or duplicated: ${id}.`);
+    ids.add(id);
+    const title = requiredString(candidate.title, "hook title", 80);
+    const description = optionalString(candidate.description, "hook description", 240);
+    const entry = assetPath(requiredString(candidate.entry, "hook entry", 180));
+    if (![".js", ".mjs", ".cjs"].includes(extname(entry))) {
+      throw new Error("Plugin hook entry must be a JavaScript file.");
+    }
+    if (!Array.isArray(candidate.providers) || candidate.providers.length === 0) {
+      throw new Error(`Plugin hook ${id} providers must be a non-empty array.`);
+    }
+    const providers: AgentProviderId[] = [];
+    for (const provider of candidate.providers) {
+      if (!AGENT_PROVIDERS.has(provider as AgentProviderId)) {
+        throw new Error(`Plugin hook ${id} has an unknown provider: ${String(provider)}.`);
+      }
+      if (providers.includes(provider as AgentProviderId)) {
+        throw new Error(`Plugin hook ${id} has a duplicated provider: ${String(provider)}.`);
+      }
+      providers.push(provider as AgentProviderId);
+    }
+    if (!Array.isArray(candidate.events) || candidate.events.length === 0) {
+      throw new Error(`Plugin hook ${id} events must be a non-empty array.`);
+    }
+    const events: PluginAgentHookEvent[] = [];
+    for (const event of candidate.events) {
+      if (!PLUGIN_HOOK_EVENTS.has(event as PluginAgentHookEvent)) {
+        throw new Error(`Plugin hook ${id} has an unknown event: ${String(event)}.`);
+      }
+      if (events.includes(event as PluginAgentHookEvent)) {
+        throw new Error(`Plugin hook ${id} has a duplicated event: ${String(event)}.`);
+      }
+      events.push(event as PluginAgentHookEvent);
+    }
+    const module = optionalString(candidate.module, "hook module", 64);
+    if (module && (!isContributionId(module) || !moduleIds.has(module))) {
+      throw new Error(`Plugin hook references an unknown module: ${module}.`);
+    }
+    return {
+      id,
+      title,
+      ...(description ? { description } : {}),
+      entry,
+      providers,
+      events,
+      ...(module ? { module } : {})
+    };
+  });
 }
 
 function validateContribution(value: unknown): PluginContribution {
@@ -1032,11 +1271,12 @@ async function inspectPackage(root: string): Promise<void> {
   await visit(root);
 }
 
-async function assertContributionAssets(root: string, contributions: readonly PluginContribution[]): Promise<void> {
-  for (const contribution of contributions) {
+async function assertManifestAssets(root: string, manifest: PluginManifest): Promise<void> {
+  for (const contribution of manifest.contributions) {
     await containedFile(root, contribution.entry);
     if (contribution.icon) await containedFile(root, contribution.icon);
   }
+  for (const hook of manifest.hooks ?? []) await containedFile(root, hook.entry);
 }
 
 async function containedFile(root: string, relativePath: string): Promise<string> {
@@ -1818,6 +2058,12 @@ function assertModularContributionFiles(manifest: PluginManifest): void {
       throw new Error(`Contribution assets must belong to its declared module: ${contribution.id}.`);
     }
   }
+  for (const hook of manifest.hooks ?? []) {
+    const available = hook.module ? moduleFiles.get(hook.module) : coreFiles;
+    if (!available?.has(hook.entry)) {
+      throw new Error(`Hook entry must belong to its declared module: ${hook.id}.`);
+    }
+  }
 }
 
 async function materializeModularPackage(
@@ -1843,21 +2089,23 @@ async function materializeModularPackage(
   await copyFile(sourceManifest, join(destination, METADATA_DIR, MANIFEST_FILE));
   await downloadFiles(sourceUrl, destination, files);
   await inspectPackage(destination);
-  await assertContributionAssets(destination, activeManifest(manifest, selectedModules).contributions);
+  await assertManifestAssets(destination, activeManifest(manifest, selectedModules));
 }
 
 function activeManifest(manifest: PluginManifest, selectedModules: readonly string[]): PluginManifest {
   const selected = new Set(selectedModules);
   const contributions = manifest.contributions.filter((contribution) => !contribution.module || selected.has(contribution.module));
+  const { settingsContribution, hooks: declaredHooks = [], ...rest } = manifest;
+  const hooks = declaredHooks.filter((hook) => !hook.module || selected.has(hook.module));
   const permissions = [
     ...manifest.permissions,
     ...(manifest.modules ?? []).filter((module) => selected.has(module.id)).flatMap((module) => module.permissions)
   ];
-  const { settingsContribution, ...rest } = manifest;
   return {
     ...rest,
     permissions: [...new Set(permissions)],
     contributions,
+    ...(hooks.length ? { hooks } : {}),
     ...(settingsContribution && contributions.some((item) => item.id === settingsContribution)
       ? { settingsContribution }
       : {})
@@ -1904,6 +2152,17 @@ function normalizeSelectedModules(manifest: PluginManifest, value: unknown): str
     selected.push(id);
   }
   return selected;
+}
+
+function normalizeEnabledHooks(
+  manifest: PluginManifest,
+  value: unknown,
+  selectedModules: readonly string[]
+): string[] {
+  if (!Array.isArray(value)) return [];
+  const available = new Set((activeManifest(manifest, selectedModules).hooks ?? []).map((hook) => hook.id));
+  return value.filter((id): id is string => typeof id === "string" && available.has(id))
+    .filter((id, index, values) => values.indexOf(id) === index);
 }
 
 function activePlugin(plugin: InstalledPlugin): InstalledPlugin {
@@ -2082,7 +2341,108 @@ function isStoredRecord(value: unknown): value is StoredPluginRecord {
     && (value.selectedModules === undefined || (
       Array.isArray(value.selectedModules) && value.selectedModules.every((item) => typeof item === "string")
     ))
+    && (value.enabledHooks === undefined || (
+      Array.isArray(value.enabledHooks) && value.enabledHooks.every((item) => typeof item === "string")
+    ))
   );
+}
+
+function runtimeHookKey(pluginId: string, hookId: string): string {
+  return `${pluginId}:${hookId}`;
+}
+
+function runtimeHookRecord(root: string, pluginId: string, hook: PluginAgentHook): RuntimeHookRecord {
+  return {
+    pluginId,
+    hookId: hook.id,
+    root,
+    entry: hook.entry,
+    providers: [...hook.providers],
+    events: [...hook.events]
+  };
+}
+
+function runtimeHookTrustMatches(
+  registry: RuntimeHookRegistry,
+  root: string,
+  pluginId: string,
+  hook: PluginAgentHook | undefined
+): boolean {
+  if (!hook) return false;
+  const persisted = registry.hooks[runtimeHookKey(pluginId, hook.id)];
+  return Boolean(persisted && sameRuntimeHookRecord(persisted, runtimeHookRecord(root, pluginId, hook)));
+}
+
+function safeRuntimeHookInterim(
+  current: RuntimeHookRegistry,
+  desired: RuntimeHookRegistry
+): RuntimeHookRegistry {
+  const hooks: Record<string, RuntimeHookRecord> = {};
+  for (const [key, desiredHook] of Object.entries(desired.hooks)) {
+    const currentHook = current.hooks[key];
+    if (currentHook && sameRuntimeHookRecord(currentHook, desiredHook)) hooks[key] = currentHook;
+  }
+  return { version: 1, hooks };
+}
+
+function sameRuntimeHookRecord(left: RuntimeHookRecord, right: RuntimeHookRecord): boolean {
+  return left.pluginId === right.pluginId
+    && left.hookId === right.hookId
+    && left.root === right.root
+    && left.entry === right.entry
+    && left.providers.length === right.providers.length
+    && left.providers.every((provider, index) => provider === right.providers[index])
+    && left.events.length === right.events.length
+    && left.events.every((event, index) => event === right.events[index]);
+}
+
+async function writeRuntimeHookRegistry(path: string, snapshot: string): Promise<void> {
+  const temporaryPath = `${path}.tmp`;
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(temporaryPath, snapshot, { encoding: "utf8", mode: 0o600 });
+  if (process.platform !== "win32") await chmod(temporaryPath, 0o600);
+  await rename(temporaryPath, path);
+}
+
+async function readRuntimeHookRegistry(path: string): Promise<RuntimeHookRegistry> {
+  try {
+    const raw = await readFile(path, "utf8");
+    if (Buffer.byteLength(raw, "utf8") > MAX_RUNTIME_HOOK_REGISTRY_BYTES) return { version: 1, hooks: {} };
+    const candidate: unknown = JSON.parse(raw);
+    if (!isRecord(candidate) || candidate.version !== 1 || !isRecord(candidate.hooks)) {
+      return { version: 1, hooks: {} };
+    }
+    const hooks: Record<string, RuntimeHookRecord> = {};
+    for (const [key, value] of Object.entries(candidate.hooks)) {
+      if (!isRuntimeHookRecord(value) || key !== runtimeHookKey(value.pluginId, value.hookId)) continue;
+      hooks[key] = value;
+    }
+    return { version: 1, hooks };
+  } catch {
+    return { version: 1, hooks: {} };
+  }
+}
+
+function isRuntimeHookRecord(value: unknown): value is RuntimeHookRecord {
+  if (!isRecord(value) || Object.keys(value).some((key) => ![
+    "pluginId", "hookId", "root", "entry", "providers", "events"
+  ].includes(key))) return false;
+  return typeof value.pluginId === "string"
+    && isPluginId(value.pluginId)
+    && typeof value.hookId === "string"
+    && isContributionId(value.hookId)
+    && typeof value.root === "string"
+    && isAbsolute(value.root)
+    && typeof value.entry === "string"
+    && !isAbsolute(value.entry)
+    && Array.isArray(value.providers)
+    && value.providers.length > 0
+    && value.providers.every((provider) => AGENT_PROVIDERS.has(provider as AgentProviderId))
+    && new Set(value.providers).size === value.providers.length
+    && Array.isArray(value.events)
+    && value.events.length > 0
+    && value.events.every((event) => PLUGIN_HOOK_EVENTS.has(event as PluginAgentHookEvent))
+    && new Set(value.events).size === value.events.length;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

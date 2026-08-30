@@ -70,6 +70,59 @@ test("RuntimeGateway rejects a wrong capability and ignores a stale turn complet
   assert.equal(gateway.currentStatus("terminal-two"), "working");
 });
 
+test("OpenCode question dialogs report needs-input and resume working afterward", POSIX_RUNTIME_GATEWAY_TEST, async (t) => {
+  const root = await fixture(t);
+  const signals = [];
+  const gateway = new RuntimeGateway({ runtimeDirectory: root, onSignal: (_id, signal) => signals.push(signal) });
+  await gateway.start();
+  t.after(() => gateway.close());
+  const capability = gateway.registerSession("terminal-opencode", "opencode");
+  const lifecycleEnvironment = [
+    "CANVASTTY_LIFECYCLE_HOOKS_ENABLED",
+    "CANVASTTY_PLUGIN_HOOK_REGISTRY",
+    "CANVASTTY_PLUGIN_HOOK_RUNNER_COMMAND",
+    "CANVASTTY_PLUGIN_HOOK_RUNNER",
+    "CANVASTTY_PLUGIN_HOOK_TERMINAL_SESSION_ID",
+    "CANVASTTY_PLUGIN_HOOK_SESSION"
+  ];
+  const previousEnvironment = Object.fromEntries(
+    [...Object.values(AGENT_RUNTIME_ENV), ...lifecycleEnvironment].map((name) => [name, process.env[name]])
+  );
+  Object.assign(process.env, {
+    [AGENT_RUNTIME_ENV.address]: capability.address,
+    [AGENT_RUNTIME_ENV.terminalSessionId]: capability.terminalSessionId,
+    [AGENT_RUNTIME_ENV.provider]: capability.provider,
+    [AGENT_RUNTIME_ENV.capabilityToken]: capability.capabilityToken,
+    CANVASTTY_LIFECYCLE_HOOKS_ENABLED: "1"
+  });
+  for (const name of lifecycleEnvironment.slice(1)) delete process.env[name];
+  t.after(() => {
+    for (const [name, value] of Object.entries(previousEnvironment)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  const { CanvasTTYLifecycle } = await import("../src/agent-runtime/opencode-plugin.mjs?question-dialog-test");
+  const plugin = await CanvasTTYLifecycle();
+  await plugin.event({ event: { type: "session.created", properties: { info: { id: "opencode-root" } } } });
+  await plugin.event({
+    event: {
+      type: "session.deleted",
+      properties: { info: { id: "opencode-child", parentID: "opencode-root" } }
+    }
+  });
+  await plugin.event({ event: { type: "question.asked", properties: { sessionID: "opencode-root" } } });
+  await plugin.event({ event: { type: "question.replied", properties: { sessionID: "opencode-root" } } });
+  await plugin.event({ event: { type: "session.deleted", properties: { info: { id: "opencode-root" } } } });
+
+  assert.deepEqual(signals.map(({ state, event }) => ({ state, event })), [
+    { state: "idle", event: "session.created" },
+    { state: "needs_approval", event: "question.asked" },
+    { state: "working", event: "question.replied" }
+  ]);
+});
+
 function message(capability, state, event, turnId) {
   return {
     v: RUNTIME_PROTOCOL_VERSION,

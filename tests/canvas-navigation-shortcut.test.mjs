@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   activeCanvasWheelBinding,
+  canvasNavigationMouseButtonFromDomButton,
+  canvasNavigationMouseButtonFromElectronButton,
   canvasOverrideBindingConflicts,
   isCanvasNavigationBindingActive,
   normalizeCanvasOverrideBinding,
@@ -10,13 +12,37 @@ import {
   shouldCanvasOwnWheel
 } from "../src/shared/canvasNavigation.ts";
 
-test("accepts modifier-only and modifier-based chords but rejects bare keys", () => {
+test("accepts modifier-only, modifier-based, and mouse-button chords but rejects bare keyboard keys", () => {
   assert.deepEqual(parseCanvasNavigationBinding("Alt"), { modifiers: ["Alt"], key: null });
   assert.deepEqual(parseCanvasNavigationBinding("Alt+Ctrl+Space"), {
     modifiers: ["Ctrl", "Alt"],
     key: "Space"
   });
   assert.equal(parseCanvasNavigationBinding("Space"), null);
+  assert.deepEqual(parseCanvasNavigationBinding("Mouse3"), { modifiers: [], key: "Mouse3" });
+  assert.deepEqual(parseCanvasNavigationBinding("Ctrl+Mouse4"), {
+    modifiers: ["Ctrl"],
+    key: "Mouse4"
+  });
+});
+
+test("normalizes DOM and Electron mouse buttons into persisted Canvas bindings", () => {
+  assert.equal(canvasNavigationMouseButtonFromDomButton(1), "Mouse3");
+  assert.equal(canvasNavigationMouseButtonFromDomButton(3), "Mouse4");
+  assert.equal(canvasNavigationMouseButtonFromDomButton(4), "Mouse5");
+  assert.equal(canvasNavigationMouseButtonFromDomButton(0), null);
+  assert.equal(canvasNavigationMouseButtonFromElectronButton("middle"), "Mouse3");
+  assert.equal(canvasNavigationMouseButtonFromElectronButton("back"), "Mouse4");
+  assert.equal(canvasNavigationMouseButtonFromElectronButton("forward"), "Mouse5");
+  assert.equal(normalizeCanvasOverrideBinding("Mouse3"), "Mouse3");
+  assert.equal(normalizeCanvasOverrideBinding("Shift+Mouse5"), "Shift+Mouse5");
+  assert.equal(isCanvasNavigationBindingActive({
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    pressedMouseButtons: new Set(["Mouse3"])
+  }, "Mouse3"), true);
 });
 
 test("wheel capture modes keep Off, On, Key, and full navigation ownership distinct", () => {

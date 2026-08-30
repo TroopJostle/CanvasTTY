@@ -1,4 +1,8 @@
-import type { CanvasWheelCaptureMode, ZoomSensitivity } from "./contracts.ts";
+import type {
+  CanvasNavigationMouseButton,
+  CanvasWheelCaptureMode,
+  ZoomSensitivity
+} from "./contracts.ts";
 
 export type CanvasNavigationPlatform = "darwin" | "other";
 
@@ -8,6 +12,7 @@ export interface CanvasNavigationKeyState {
   metaKey: boolean;
   shiftKey: boolean;
   pressedKeys?: ReadonlySet<string>;
+  pressedMouseButtons?: ReadonlySet<CanvasNavigationMouseButton>;
 }
 
 export interface CanvasWheelOwnershipInput {
@@ -55,6 +60,9 @@ const NAMED_KEYS = new Set([
   "Home", "End", "PageUp", "PageDown", "Space", "Enter", "Escape", "Tab",
   "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Insert", "Backspace"
 ]);
+const CANVAS_NAVIGATION_MOUSE_BUTTONS = new Set<CanvasNavigationMouseButton>([
+  "Mouse3", "Mouse4", "Mouse5"
+]);
 
 export function canvasNavigationPlatform(platform: string): CanvasNavigationPlatform {
   return platform === "darwin" ? "darwin" : "other";
@@ -88,7 +96,7 @@ export function parseCanvasNavigationBinding(value: unknown): ParsedCanvasNaviga
     key = normalizeCanvasNavigationKey(part);
     if (!key) return null;
   }
-  if (modifiers.length === 0) return null;
+  if (modifiers.length === 0 && (key === null || !isCanvasNavigationMouseButton(key))) return null;
 
   return {
     modifiers: MODIFIER_ORDER.filter((modifier) => modifiers.includes(modifier)),
@@ -120,7 +128,11 @@ export function isCanvasNavigationBindingActive(
   const parsed = parseCanvasNavigationBinding(binding);
   if (!parsed) return false;
   if (parsed.modifiers.some((modifier) => !isCanvasNavigationModifierActive(state, modifier))) return false;
-  return parsed.key === null || state.pressedKeys?.has(parsed.key) === true;
+  if (parsed.key === null) return true;
+  if (isCanvasNavigationMouseButton(parsed.key)) {
+    return state.pressedMouseButtons?.has(parsed.key) === true;
+  }
+  return state.pressedKeys?.has(parsed.key) === true;
 }
 
 export function isCanvasNavigationBindingKey(key: string, binding: string | null): boolean {
@@ -129,7 +141,39 @@ export function isCanvasNavigationBindingKey(key: string, binding: string | null
   if (!parsed) return false;
   const modifier = canvasNavigationModifierFromKey(key);
   if (modifier) return parsed.modifiers.includes(modifier);
+  if (parsed.key !== null && isCanvasNavigationMouseButton(parsed.key)) return false;
   return parsed.key === normalizeCanvasNavigationKey(key);
+}
+
+export function isCanvasNavigationBindingMouseButton(
+  button: CanvasNavigationMouseButton,
+  binding: string | null
+): boolean {
+  if (binding === null) return false;
+  const parsed = parseCanvasNavigationBinding(binding);
+  return parsed?.key === button;
+}
+
+export function canvasNavigationMouseButtonFromDomButton(
+  button: number
+): CanvasNavigationMouseButton | null {
+  if (button === 1) return "Mouse3";
+  if (button === 3) return "Mouse4";
+  if (button === 4) return "Mouse5";
+  return null;
+}
+
+export function canvasNavigationMouseButtonFromElectronButton(
+  button: string | undefined
+): CanvasNavigationMouseButton | null {
+  if (button === "middle") return "Mouse3";
+  if (button === "back") return "Mouse4";
+  if (button === "forward") return "Mouse5";
+  return null;
+}
+
+export function isCanvasNavigationMouseButton(value: string): value is CanvasNavigationMouseButton {
+  return CANVAS_NAVIGATION_MOUSE_BUTTONS.has(value as CanvasNavigationMouseButton);
 }
 
 export function normalizeCanvasNavigationInputKey(key: string, code?: string): string | null {
@@ -238,6 +282,7 @@ export function isCanvasNavigationModifierActive(
 }
 
 export function normalizeCanvasNavigationKey(key: string): string | null {
+  if (isCanvasNavigationMouseButton(key)) return key;
   if (key === " ") return "Space";
   if (key.length === 1 && /[A-Za-z0-9]/.test(key)) return key.toUpperCase();
   if (/^F(?:[1-9]|1\d|2[0-4])$/.test(key)) return key;

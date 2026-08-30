@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { collectRepositoryIssues } from "../scripts/audit-secrets.mjs";
 
@@ -79,6 +80,25 @@ test("package manifest and lockfile publish the same version", async () => {
   assert.equal(lockfile.packages[""].license, manifest.license);
 });
 
+test("TypeScript and JavaScript modules have unique case-insensitive stems", async () => {
+  const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+  const modulePaths = (await Promise.all(
+    ["src", "tests", "scripts"].map((directory) => collectModulePaths(repositoryRoot, directory))
+  )).flat();
+  const pathsByStem = new Map();
+
+  for (const path of modulePaths) {
+    const stem = path.replace(/\.(?:[cm]?[jt]sx?)$/i, "").toLowerCase();
+    pathsByStem.set(stem, [...(pathsByStem.get(stem) ?? []), path]);
+  }
+
+  const collisions = [...pathsByStem.values()]
+    .filter((paths) => paths.length > 1)
+    .map((paths) => paths.sort())
+    .sort((left, right) => left[0].localeCompare(right[0]));
+  assert.deepEqual(collisions, []);
+});
+
 test("release workflow uploads installers only and keeps Windows targets distinct", async () => {
   const config = normalizeLineEndings(
     await readFile(new URL("../electron-builder.yml", import.meta.url), "utf8")
@@ -137,4 +157,21 @@ function escapeRegExp(value) {
 
 function normalizeLineEndings(value) {
   return value.replaceAll("\r\n", "\n");
+}
+
+async function collectModulePaths(repositoryRoot, directory) {
+  const absoluteDirectory = join(repositoryRoot, directory);
+  const entries = await readdir(absoluteDirectory, { withFileTypes: true });
+  const paths = [];
+
+  for (const entry of entries) {
+    const relativePath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      paths.push(...await collectModulePaths(repositoryRoot, relativePath));
+    } else if (/\.(?:[cm]?[jt]sx?)$/i.test(entry.name)) {
+      paths.push(relative(repositoryRoot, join(repositoryRoot, relativePath)).replaceAll("\\", "/"));
+    }
+  }
+
+  return paths;
 }

@@ -2,19 +2,20 @@
 
 [English](plugins.md) · [Русский](plugins.ru.md) · [简体中文](plugins.zh-CN.md) · [文档首页](README.zh-CN.md)
 
-CanvasTTY 运行时插件是从 HTTPS GitHub 仓库安装的静态 web 包。一个插件可以贡献一个 HOME 小组件、一个可移动的画布应用、一个独立的应用窗口，或这三者的任意组合。插件的 HTML、CSS 和 JavaScript 运行在没有 Node.js 的 Electron sandbox 中。
+CanvasTTY 运行时插件从 HTTPS GitHub 仓库安装。插件可以提供 sandboxed web contribution，也可以声明可选的 agent hook 脚本。Web contribution 不具备 Node.js 能力；每个 hook 在用户于 **设置 → Agents → Hooks** 中单独确认信任前始终关闭。
 
 ## 信任模型
 
 安装插件等同于允许第三方浏览器代码在本地运行。CanvasTTY 会压缩这一信任面，但无法让未知代码变得可信：
 
-- CanvasTTY 只下载 GitHub 仓库根 URL 对应默认分支的 tar 归档，绝不运行 `npm install`、构建钩子、原生模块或仓库脚本。
+- CanvasTTY 只下载 GitHub 仓库根 URL 对应默认分支的 tar 归档，安装或更新期间绝不运行 `npm install`、构建钩子、原生模块或仓库脚本。
 - 包内不得包含符号链接，且限制为 500 个文件或目录 / 25 MB。单个对外提供的资源限制为 8 MB。
 - 插件 frame 拥有不透明的 sandbox origin，无法访问父级 DOM，没有 `window.canvasTTY`，也没有 Node.js API。
 - 独立窗口的 preload 不暴露任何 Node 原语。它通过一个带身份校验的 IPC handler 转发同样的 SDK 消息。
 - 每个特权 SDK 方法都由 manifest 中的权限把关。权限会在用户确认安装之前展示。
-- 服务商凭据、PTY 缓冲区、工作目录、原始服务商响应和文件系统访问绝不会跨越插件边界。
+- Sandboxed web contribution 不会收到服务商凭据、PTY 缓冲区、工作目录、原始服务商响应或文件系统访问权限。
 - 禁用或卸载插件会立即停止提供其资源，并关闭其独立窗口。
+- Agent hook 不会随安装自动启用。启用后，该脚本等同于原生应用：它会接收 agent 事件 payload、以当前用户权限运行，并可能访问该用户可读的配置或凭据；更新插件、更换 module 或禁用插件都会撤销全部 hook 信任。
 
 CanvasTTY 不嵌入任意的原生操作系统窗口。`window` 贡献是一个由 CanvasTTY 持有的 sandboxed `BrowserWindow`。原生 reparenting 在 Wayland、macOS、Windows、不同 DPI 模式、弹窗和 GPU surface 之间既不可移植也不可靠。
 
@@ -31,9 +32,10 @@ apps/notes.html
 apps/notes.js
 windows/focus.html
 windows/focus.js
+hooks/audit.mjs
 ```
 
-端到端示例见 [`examples/plugins/studio-kit`](../examples/plugins/studio-kit)。
+不包含特权 hook 的 sandboxed web surface 端到端示例见 [`examples/plugins/studio-kit`](../examples/plugins/studio-kit)。
 编辑器工具可以使用 [manifest JSON Schema](canvastty-plugin.schema.json) 和 [SDK TypeScript 声明](plugin-api.d.ts)。
 
 ## Manifest v1
@@ -46,6 +48,16 @@ windows/focus.js
   "version": "1.0.0",
   "description": "Small CanvasTTY surfaces backed by real host state.",
   "permissions": ["storage", "secrets", "sessions:read", "launcher:open"],
+  "hooks": [
+    {
+      "id": "audit",
+      "title": "本地审计日志",
+      "description": "将选定的 agent 生命周期事件写入用户管理的日志。",
+      "entry": "hooks/audit.mjs",
+      "providers": ["codex", "claude", "kimi"],
+      "events": ["session-start", "permission-request", "session-end"]
+    }
+  ],
   "settingsContribution": "notes",
   "contributions": [
     {
@@ -83,6 +95,14 @@ windows/focus.js
 模块化 manifest 可声明经过完整性校验的 coreFiles 和最多 16 个可选 modules。每个文件都包含 path、精确的 bytes 大小和 SHA-256。CanvasTTY 在预览时只下载 manifest，显示模块复选框、大小和权限，然后仅下载核心文件与用户选择的模块。之后更改选择时会原子替换插件包，并删除已取消模块的文件。Contribution 可以通过 module 字段在模块未安装时隐藏。
 
 模块文件的完整性（精确字节数和 SHA-256 摘要）会根据插件 manifest 中声明的哈希进行校验，而 manifest 本身通过 TLS 从 GitHub 获取，没有单独的签名。因此信任锚点是插件的 GitHub 仓库：被入侵的仓库可以发布带有匹配哈希的新 manifest。
+
+### 可选 Agent Hooks
+
+`hooks` 可声明最多 16 个 `.js`、`.mjs` 或 `.cjs` entry。每个 hook 包含稳定的 `id`、`title`、`entry`、`providers` 与语义 `events`（`session-start`、`prompt-submit`、`permission-request`、`permission-result`、`after-tool`、`stop`、`session-end`）。不支持某个语义事件的 provider 会跳过该事件。在 modular plugin 中，hook entry 必须由对应的可选 module 完整性清单声明；没有 module 时则由 `coreFiles` 声明。Non-modular 包只需在经过校验的 entry path 上包含该文件。
+
+Hook-only 插件使用空的 `contributions` 与非空的 `hooks`。安装只复制并验证文件；用户检查源码和仓库后，仍须在 **设置 → Agents → Hooks** 中单独确认信任。CanvasTTY 在每次调用前都会检查 host-owned registry，因此关闭 hook 会立即阻止后续调用。Provider 自带的 hook review 仍然有效；例如 Codex 可能还会要求用户通过其 `/hooks` 检查 CanvasTTY bridge，CanvasTTY 不会使用全局 trust-bypass 参数绕过该保护。
+
+脚本在独立进程中运行，并通过 stdin 接收包含 `apiVersion`、`pluginId`、`hookId`、`terminalSessionId`、`provider`、`event`、`providerEvent` 与 `payload` 的 JSON。Stdout/stderr 会被丢弃，执行时间受限，CanvasTTY 内部 capability token 会从子进程环境中移除。这不是 sandbox：脚本仍以当前用户权限读写文件或启动进程。
 
 host.onStorageChange(listener) 会把 host.storage.set 的写入通知给同一插件的所有活动界面——画布卡片、HOME 小组件和独立窗口——从而避免轮询。
 

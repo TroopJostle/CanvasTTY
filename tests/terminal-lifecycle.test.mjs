@@ -8,6 +8,7 @@ const terminalCardPath = new URL(
 );
 const appStylesPath = new URL("../src/renderer/src/styles/app.css", import.meta.url);
 const terminalManagerPath = new URL("../src/main/services/TerminalManager.ts", import.meta.url);
+const contractsPath = new URL("../src/shared/contracts.ts", import.meta.url);
 
 test("palette changes retheme the live xterm without recreating it", async () => {
   const source = await readFile(terminalCardPath, "utf8");
@@ -55,6 +56,29 @@ test("terminal uses one block cursor instead of overlaying a bar on provider cur
   assert.doesNotMatch(source, /cursorStyle: "bar"/);
 });
 
+test("Grok waits for the measured xterm grid before its first TUI draw", async () => {
+  const [card, manager, contracts, styles] = await Promise.all([
+    readFile(terminalCardPath, "utf8"),
+    readFile(terminalManagerPath, "utf8"),
+    readFile(contractsPath, "utf8"),
+    readFile(appStylesPath, "utf8")
+  ]);
+
+  assert.match(contracts, /INITIAL_TERMINAL_COLS = 80/);
+  assert.match(contracts, /INITIAL_TERMINAL_ROWS = 24/);
+  assert.match(card, /new Terminal\(\{\s*cols: INITIAL_TERMINAL_COLS,\s*rows: INITIAL_TERMINAL_ROWS/);
+  assert.match(card, /fitTerminalPreservingViewport[\s\S]*?reportGrid\(terminal\.cols, terminal\.rows\)/);
+  assert.match(card, /terminal-card--\$\{session\.provider\}/);
+  assert.match(card, /replayingSnapshot[\s\S]*?queuedLiveOutput/);
+  assert.match(manager, /this\.spawnPty\([\s\S]*?cols,\s*rows,\s*cwd/);
+  assert.match(manager, /session\.cols = safeCols;\s*session\.rows = safeRows/);
+  assert.match(manager, /request\.provider === "grok"[\s\S]*?awaitingInitialResize: awaitMeasuredGrid/);
+  assert.match(manager, /if \(session\.awaitingInitialResize\) \{\s*this\.launchAwaitingSession\(id, session\)/);
+  assert.match(manager, /session\.metadata\.cwd,\s*session\.cols,\s*session\.rows/);
+  assert.match(manager, /session\.metadata\.provider === "grok"[\s\S]*?session\.awaitingInitialResize = true/);
+  assert.match(styles, /\.terminal-card--grok \.terminal-card__surface \{ padding: 6px 8px 8px; \}/);
+});
+
 test("programmatic hover focus does not leak focus reports into the agent TUI", async () => {
   const source = await readFile(terminalCardPath, "utf8");
 
@@ -78,6 +102,18 @@ test("session metadata revisions advance before lifecycle events cross IPC", asy
 
   assert.match(source, /revision: 0/);
   assert.match(source, /metadata\.revision \+= 1;\s*this\.emit\(IPC\.terminalSession/);
+});
+
+test("revoking lifecycle hooks makes live agent status unavailable until a restarted session gets a new parser", async () => {
+  const source = await readFile(terminalManagerPath, "utf8");
+
+  assert.match(source, /setLifecycleHooksEnabled\(enabled: boolean\): void/);
+  assert.match(source, /this\.lifecycleHooksEnabled = next;\s*if \(next\) return;/);
+  assert.match(source, /session\.lifecycle = null;/);
+  assert.match(source, /session\.metadata\.provider === "terminal"/);
+  assert.match(source, /session\.metadata\.status = "unavailable";\s*this\.emitSession\(session\.metadata\)/);
+  assert.match(source, /if \(!this\.lifecycleHooksEnabled \|\| !session/);
+  assert.match(source, /session\.lifecycle = this\.lifecycleHooksEnabled\s*\? createProviderLifecycleParser/);
 });
 
 test("terminal viewport keeps the palette background after row-sized fits", async () => {

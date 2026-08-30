@@ -329,13 +329,21 @@ test("terminal base environment never inherits a foreign CanvasTTY capability", 
     [AGENT_RUNTIME_ENV.address]: "/tmp/foreign-runtime.sock",
     [AGENT_RUNTIME_ENV.terminalSessionId]: "foreign-runtime-terminal",
     [AGENT_RUNTIME_ENV.provider]: "claude",
-    [AGENT_RUNTIME_ENV.capabilityToken]: "foreign-runtime-capability"
+    [AGENT_RUNTIME_ENV.capabilityToken]: "foreign-runtime-capability",
+    CANVASTTY_PLUGIN_HOOK_REGISTRY: "/tmp/foreign-plugin-hooks.json",
+    CANVASTTY_PLUGIN_HOOK_TERMINAL_SESSION_ID: "foreign-plugin-terminal",
+    CANVASTTY_LIFECYCLE_HOOKS_ENABLED: "1",
+    ELECTRON_RUN_AS_NODE: "1"
   });
 
   assert.equal(environment.PATH, "/usr/bin");
   assert.equal(environment.TERM, "xterm-256color");
   for (const key of Object.values(AGENT_BROWSER_ENV)) assert.equal(key in environment, false);
   for (const key of Object.values(AGENT_RUNTIME_ENV)) assert.equal(key in environment, false);
+  assert.equal("CANVASTTY_PLUGIN_HOOK_REGISTRY" in environment, false);
+  assert.equal("CANVASTTY_PLUGIN_HOOK_TERMINAL_SESSION_ID" in environment, false);
+  assert.equal("CANVASTTY_LIFECYCLE_HOOKS_ENABLED" in environment, false);
+  assert.equal("ELECTRON_RUN_AS_NODE" in environment, false);
 });
 
 test("MCP retries reuse a deterministic browser request id and can be canceled", async () => {

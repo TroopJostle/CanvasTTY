@@ -18,6 +18,86 @@ const input = (type, key, modifiers = {}) => ({
   ...modifiers
 });
 
+const pointer = (button, pressed, modifiers = {}) => ({
+  button,
+  pressed,
+  altKey: false,
+  ctrlKey: false,
+  metaKey: false,
+  shiftKey: false,
+  ...modifiers
+});
+
+test("mouse-button overrides activate on press and release without keyboard modifiers", () => {
+  const tracker = new CanvasNavigationOverrideTracker("Mouse3");
+  assert.deepEqual(tracker.updatePointer(pointer("Mouse3", true)), {
+    active: true,
+    changed: true,
+    reserved: true
+  });
+  assert.equal(tracker.ownsMouseButton("Mouse3"), true);
+  assert.deepEqual(tracker.updatePointer(pointer("Mouse3", false)), {
+    active: false,
+    changed: true,
+    reserved: true
+  });
+  assert.equal(tracker.ownsMouseButton("Mouse3"), false);
+});
+
+test("controller tracks Electron side buttons for wheel and full-navigation bindings", () => {
+  const contents = new EventEmitter();
+  contents.isDestroyed = () => false;
+  contents.setIgnoreMenuShortcuts = () => undefined;
+  const states = [];
+  const controller = new CanvasNavigationInputController({
+    wheelBinding: "Mouse4",
+    navigationBinding: "Mouse4"
+  }, (state) => states.push(state));
+  controller.attach(contents);
+
+  let prevented = false;
+  contents.emit("before-mouse-event", { preventDefault: () => { prevented = true; } }, {
+    type: "mouseDown",
+    button: "back",
+    modifiers: []
+  });
+  assert.equal(controller.wheelActive, true);
+  assert.equal(controller.active, true);
+  assert.equal(controller.ownsAnyMouseButton("back"), true);
+  assert.equal(prevented, true);
+  prevented = false;
+  contents.emit("before-mouse-event", { preventDefault: () => { prevented = true; } }, {
+    type: "mouseUp",
+    button: "back",
+    modifiers: []
+  });
+  assert.equal(prevented, true);
+  assert.deepEqual(states, [
+    { wheelActive: true, navigationActive: true },
+    { wheelActive: false, navigationActive: false }
+  ]);
+});
+
+test("the owner renderer receives a bound mouse event so its DOM drag can start", () => {
+  const contents = new EventEmitter();
+  contents.isDestroyed = () => false;
+  contents.setIgnoreMenuShortcuts = () => undefined;
+  const controller = new CanvasNavigationInputController({
+    wheelBinding: null,
+    navigationBinding: "Mouse4"
+  }, () => undefined);
+  controller.attach(contents, { preventMouseBindings: false });
+
+  let prevented = false;
+  contents.emit("before-mouse-event", { preventDefault: () => { prevented = true; } }, {
+    type: "mouseDown",
+    button: "back",
+    modifiers: []
+  });
+  assert.equal(controller.active, true);
+  assert.equal(prevented, false);
+});
+
 test("modifier-only override activates immediately and permits extra zoom modifiers", () => {
   const tracker = new CanvasNavigationOverrideTracker("Alt");
   assert.deepEqual(tracker.update(input("keyDown", "Alt", { alt: true })), {

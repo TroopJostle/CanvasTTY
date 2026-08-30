@@ -6,6 +6,7 @@
 }
 
 .app {
+  --ui-scale: 1;
   --canvas-bg: #aaa7a2;
   --surface: #353442;
   --surface-soft: #424251;

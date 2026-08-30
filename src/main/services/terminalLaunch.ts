@@ -18,6 +18,7 @@ interface LaunchResolutionOptions {
   environment?: Readonly<NodeJS.ProcessEnv>;
   fileExists?: (path: string) => boolean;
   providerCli?: ProviderCliResolution;
+  resumePrevious?: boolean;
 }
 
 const WINDOWS_NATIVE_EXTENSIONS = [".exe", ".com"];
@@ -49,7 +50,8 @@ export function resolveTerminalLaunch(
     : undefined;
   const providerArgs = [
     ...(profile === "yolo" && provider !== "opencode" ? dangerousArguments(provider) : []),
-    ...agentBrowserArgs
+    ...agentBrowserArgs,
+    ...(options.resumePrevious ? resumeArguments(provider) : [])
   ];
   const combinedEnvironment = {
     ...providerCli.environment,
@@ -68,6 +70,10 @@ export function resolveTerminalLaunch(
     args: providerTerminalBatchCommandLine(providerCli.executable, providerArgs),
     environment: combinedEnvironment
   };
+}
+
+function resumeArguments(provider: Exclude<ProviderId, "terminal">): string[] {
+  return provider === "codex" ? ["resume", "--last"] : ["--continue"];
 }
 
 function dangerousArguments(provider: Exclude<ProviderId, "terminal" | "opencode">): string[] {

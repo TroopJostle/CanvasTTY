@@ -44,9 +44,6 @@ export class PluginBrowserOpenBroker {
       this.pending.set(request.requestId, { resolve, reject, timer });
 
       try {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.show();
-        mainWindow.focus();
         mainWindow.webContents.send(IPC.pluginsBrowserOpenRequested, request);
       } catch (error) {
         const pending = this.pending.get(request.requestId);
