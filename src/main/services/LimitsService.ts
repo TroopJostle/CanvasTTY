@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
@@ -23,6 +23,7 @@ const MAX_LINE_BYTES = 1_048_576;
 const MAX_BUFFER_BYTES = MAX_LINE_BYTES * 2;
 const MAX_WINDOWS = 12;
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 const GROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 
@@ -287,6 +288,7 @@ export class LimitsService {
 
 export interface ClaudeUsageReadOptions {
   configRoot?: string;
+  keychainRequest?: () => Promise<string>;
   request?: (
     url: string,
     accessToken: string,
@@ -299,7 +301,7 @@ export async function readClaudeUsage(
   options: ClaudeUsageReadOptions = {}
 ): Promise<unknown> {
   const configRoot = options.configRoot ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
-  const credentials = await readCredentialFile(join(configRoot, ".credentials.json"), "not-authenticated");
+  const credentials = await readClaudeCredentials(configRoot, options);
   const oauth = isRecord(credentials.claudeAiOauth) ? credentials.claudeAiOauth : null;
   const accessToken = cleanSecret(oauth?.accessToken);
   // Missing credentials describe only this runtime user; they do not prove anything about the user's plan.
@@ -308,6 +310,47 @@ export async function readClaudeUsage(
   return (options.request ?? fetchUsageJson)(CLAUDE_USAGE_URL, accessToken, {
     "anthropic-beta": "oauth-2025-04-20",
     "user-agent": `canvastty/${clientVersion}`
+  });
+}
+
+async function readClaudeCredentials(
+  configRoot: string,
+  options: ClaudeUsageReadOptions
+): Promise<Record<string, unknown>> {
+  try {
+    return await readCredentialFile(join(configRoot, ".credentials.json"), "not-authenticated");
+  } catch (error) {
+    if (!(error instanceof LimitsAdapterError) || error.reason !== "not-authenticated") throw error;
+  }
+
+  // Recent Claude Code builds store OAuth credentials in the macOS Keychain
+  // instead of ~/.claude/.credentials.json. An injected reader also makes this
+  // migration path testable without accessing the developer's real Keychain.
+  const keychainRequest = options.keychainRequest
+    ?? (options.configRoot === undefined && process.platform === "darwin" ? readMacOSClaudeCredentials : null);
+  if (!keychainRequest) throw new LimitsAdapterError("not-authenticated");
+
+  try {
+    const parsed: unknown = JSON.parse(await keychainRequest());
+    if (!isRecord(parsed)) throw new LimitsAdapterError("protocol-error");
+    return parsed;
+  } catch (error) {
+    if (error instanceof LimitsAdapterError) throw error;
+    throw new LimitsAdapterError("not-authenticated");
+  }
+}
+
+function readMacOSClaudeCredentials(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "/usr/bin/security",
+      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
+      { encoding: "utf8", maxBuffer: MAX_LINE_BYTES, timeout: REQUEST_TIMEOUT_MS },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout);
+      }
+    );
   });
 }
 

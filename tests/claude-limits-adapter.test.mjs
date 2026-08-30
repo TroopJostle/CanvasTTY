@@ -63,3 +63,26 @@ test("missing Claude credentials mean sign-in is unavailable, not that a subscri
     ]);
   }
 });
+
+test("Claude limits fall back to macOS Keychain credentials when the legacy file is absent", async () => {
+  const configRoot = await mkdtemp(join(tmpdir(), "canvastty-claude-keychain-"));
+  try {
+    const userToken = ["keychain", "oauth", "token"].join("-");
+    let requestedToken = null;
+
+    await readClaudeUsage("1.5.0", {
+      configRoot,
+      keychainRequest: async () => JSON.stringify({
+        claudeAiOauth: { accessToken: userToken }
+      }),
+      request: async (_url, accessToken) => {
+        requestedToken = accessToken;
+        return { five_hour: { utilization: 7 } };
+      }
+    });
+
+    assert.equal(requestedToken, userToken);
+  } finally {
+    await rm(configRoot, { recursive: true, force: true });
+  }
+});
