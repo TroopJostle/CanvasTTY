@@ -32,13 +32,11 @@ export function canvasRegionAtPoint(
   };
 }
 
-export function boundsCenterInsideRegion(bounds: SessionBounds, region: CanvasRegion): boolean {
-  const centerX = bounds.position.x + bounds.size.width / 2;
-  const centerY = bounds.position.y + bounds.size.height / 2;
-  return centerX >= region.position.x
-    && centerX <= region.position.x + region.size.width
-    && centerY >= region.position.y
-    && centerY <= region.position.y + region.size.height;
+export function boundsInsideRegion(bounds: SessionBounds, region: CanvasRegion): boolean {
+  return bounds.position.x >= region.position.x
+    && bounds.position.y >= region.position.y
+    && bounds.position.x + bounds.size.width <= region.position.x + region.size.width
+    && bounds.position.y + bounds.size.height <= region.position.y + region.size.height;
 }
 
 export function translateBounds(bounds: SessionBounds, delta: Point): SessionBounds {

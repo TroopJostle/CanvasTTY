@@ -5,6 +5,7 @@ import type {
   BrowserCommandType,
   BrowserDownloadSnapshot,
   BrowserSnapshot,
+  CanvasLauncherItemId,
   CanvasColorId,
   CanvasOverlayPlacement,
   CanvasPatternId,
@@ -18,6 +19,7 @@ import type {
   LimitProviderId,
   LocaleId,
   MinimapInteractionMode,
+  PaletteId,
   PluginContribution,
   PluginGridSize,
   PluginManifest,
@@ -27,13 +29,25 @@ import type {
   ShortcutAction,
   ZoomSensitivity
 } from "../../../../shared/contracts";
-import { BROWSER_PROVIDER_COLORS } from "../../../../shared/contracts";
+import {
+  BROWSER_PROVIDER_COLORS,
+  CANVAS_LAUNCHER_ITEMS,
+  DEFAULT_CANVAS_LAUNCHER_ITEMS,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
+  UI_SCALE_STEP
+} from "../../../../shared/contracts";
 import {
   canvasOverrideBindingConflicts,
   defaultCanvasWheelBinding
 } from "../../../../shared/canvasNavigation";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { UiIcon } from "../../components/UiIcon";
+import { UiIcon, type UiIconName } from "../../components/UiIcon";
+import {
+  CanvasMenuDivider,
+  CanvasMenuLabel,
+  CanvasMenuRow
+} from "../../components/CanvasMenuPrimitives";
 import {
   AGENT_PROVIDERS,
   LIMIT_PROVIDERS,
@@ -55,8 +69,22 @@ import {
 import { CanvasNavigationShortcutEditor } from "./CanvasNavigationShortcutEditor";
 import { AgentHooksSettings } from "./AgentHooksSettings";
 import { AboutSettings } from "./AboutSettings";
+import { setCanvasLauncherItemEnabled } from "../launcher/canvasLauncher";
 
 type SettingsSection = "general" | "appearance" | "agents" | "controls" | "browser" | "plugins" | "about";
+
+const SETTINGS_SECTIONS: ReadonlyArray<{
+  id: SettingsSection;
+  icon: UiIconName;
+}> = [
+  { id: "general", icon: "app-window" },
+  { id: "appearance", icon: "palette" },
+  { id: "agents", icon: "terminal" },
+  { id: "controls", icon: "sliders-horizontal" },
+  { id: "browser", icon: "browser" },
+  { id: "plugins", icon: "blocks" },
+  { id: "about", icon: "info" }
+];
 
 const CLASSIC_HOME_PREVIEW = ["#B8CF99", "#D8E1C5", "#9CC7DC", "#D5A2C9"];
 
@@ -256,28 +284,58 @@ export function SettingsPanel({
     <div className={`settings-backdrop ${open ? "settings-backdrop--open" : ""}`} onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <aside className={`settings-panel ${open ? "settings-panel--open" : ""}`} aria-hidden={!open}>
-        <div className="settings-panel__topbar">
-          <header className="dialog-header settings-panel__header">
+      <aside
+        className={`settings-panel ${open ? "settings-panel--open" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t(locale, "settings")}
+        aria-hidden={!open}
+      >
+        <div className="settings-panel__sidebar">
+          <header className="settings-panel__brand">
+            <span className="settings-panel__brand-icon"><UiIcon name="settings" size="1.05em" /></span>
             <h2>{t(locale, "settings")}</h2>
-            <button className="icon-button" type="button" onClick={onClose} aria-label={t(locale, "close")}><UiIcon name="close" size={20} /></button>
           </header>
-
           <nav className="settings-tabs" role="tablist" aria-label={t(locale, "settingsSections")}>
-            {(["general", "appearance", "agents", "controls", "browser", "plugins", "about"] as SettingsSection[]).map((value) => (
+            {SETTINGS_SECTIONS.map(({ id, icon }) => (
               <button
-                key={value}
-                className={section === value ? "settings-tabs__button settings-tabs__button--active" : "settings-tabs__button"}
+                id={`settings-tab-${id}`}
+                key={id}
+                className={section === id ? "settings-tabs__button settings-tabs__button--active" : "settings-tabs__button"}
                 type="button"
                 role="tab"
-                aria-selected={section === value}
-                onClick={() => setSection(value)}
-              >{t(locale, value)}</button>
+                aria-controls={`settings-panel-${id}`}
+                aria-selected={section === id}
+                title={t(locale, id)}
+                onClick={() => setSection(id)}
+              >
+                <span className="settings-tabs__icon"><UiIcon name={icon} size="1.05em" /></span>
+                <span>{t(locale, id)}</span>
+              </button>
             ))}
           </nav>
         </div>
 
-        <div className="settings-panel__content" role="tabpanel">
+        <div className="settings-panel__main">
+          <header className="settings-panel__header">
+            <div>
+              <span>{t(locale, "settings")}</span>
+              <h2>{t(locale, section)}</h2>
+            </div>
+            <button
+              className="settings-panel__close"
+              type="button"
+              onClick={onClose}
+              aria-label={t(locale, "close")}
+            ><UiIcon name="close" size="1.05em" /></button>
+          </header>
+
+          <div
+            id={`settings-panel-${section}`}
+            className="settings-panel__content"
+            role="tabpanel"
+            aria-labelledby={`settings-tab-${section}`}
+          >
           {section === "general" && (
             <>
               <SettingGroup label={t(locale, "language")}>
@@ -297,11 +355,32 @@ export function SettingsPanel({
                   onChange={(value) => void onChange({ restoreTerminalSessions: value === "save" })}
                 />
               </SettingGroup>
+              <SettingGroup label={t(locale, "persistCanvasRegions")}>
+                <Segmented
+                  value={settings.persistCanvasRegions ? "save" : "discard"}
+                  options={[["discard", t(locale, "doNotSave")], ["save", t(locale, "saveAndContinue")]]}
+                  onChange={(value) => void onChange({ persistCanvasRegions: value === "save" })}
+                />
+              </SettingGroup>
+              <SettingGroup label={t(locale, "persistStickyNotes")}>
+                <Segmented
+                  value={settings.persistStickyNotes ? "save" : "discard"}
+                  options={[["discard", t(locale, "doNotSave")], ["save", t(locale, "saveAndContinue")]]}
+                  onChange={(value) => void onChange({ persistStickyNotes: value === "save" })}
+                />
+              </SettingGroup>
             </>
           )}
 
           {section === "appearance" && (
             <>
+              <SettingGroup label={t(locale, "palette")} description={t(locale, "paletteDescription")}>
+                <Segmented
+                  value={settings.palette}
+                  options={( ["sage", "lilac", "night"] as PaletteId[]).map((value) => [value, t(locale, value)])}
+                  onChange={(value) => void onChange({ palette: value as PaletteId })}
+                />
+              </SettingGroup>
               <SettingGroup label={t(locale, "homeColors")} description={t(locale, "homeColorsDescription")}>
                 <SwatchChoices
                   value={appearance.homeAccentPreset}
@@ -376,6 +455,19 @@ export function SettingsPanel({
                   onChange={(value) => void onChange({ pattern: value as CanvasPatternId })}
                 />
               </SettingGroup>
+              <SettingGroup label={t(locale, "uiScale")} description={t(locale, "uiScaleDescription")}>
+                <label className="ui-scale-setting">
+                  <input
+                    type="range"
+                    min={UI_SCALE_MIN}
+                    max={UI_SCALE_MAX}
+                    step={UI_SCALE_STEP}
+                    value={settings.uiScale}
+                    onChange={(event) => void onChange({ uiScale: Number(event.currentTarget.value) })}
+                  />
+                  <output>{settings.uiScale.toFixed(2)}×</output>
+                </label>
+              </SettingGroup>
               <SettingGroup label={t(locale, "shortcutHints")}>
                 <Segmented
                   value={settings.showShortcutHints ? "on" : "off"}
@@ -424,6 +516,42 @@ export function SettingsPanel({
                 onSetPluginHookEnabled={onSetPluginHookEnabled}
               />
               <SettingGroup
+                layout="stacked"
+                label={t(locale, "canvasLauncherItems")}
+                description={t(locale, "canvasLauncherItemsDescription")}
+              >
+                <div className="canvas-menu canvas-launcher-settings-menu">
+                  <CanvasMenuLabel>{t(locale, "canvasLauncherSettingsLabel")}</CanvasMenuLabel>
+                  {CANVAS_LAUNCHER_ITEMS.map((item: CanvasLauncherItemId) => {
+                    const enabled = settings.canvasLauncherItems.includes(item);
+                    return (
+                      <CanvasMenuRow
+                        icon={enabled ? "minus" : "plus"}
+                        muted={!enabled}
+                        aria-pressed={enabled}
+                        aria-label={`${t(locale, enabled ? "disable" : "enable")}: ${PROVIDERS[item].label}`}
+                        title={`${t(locale, enabled ? "disable" : "enable")}: ${PROVIDERS[item].label}`}
+                        key={item}
+                        onClick={() => void onChange({
+                          canvasLauncherItems: setCanvasLauncherItemEnabled(
+                            settings.canvasLauncherItems,
+                            item,
+                            !enabled
+                          )
+                        })}
+                      >{PROVIDERS[item].label}</CanvasMenuRow>
+                    );
+                  })}
+                  <CanvasMenuDivider />
+                  <CanvasMenuRow
+                    icon="home"
+                    muted
+                    onClick={() => void onChange({ canvasLauncherItems: [...DEFAULT_CANVAS_LAUNCHER_ITEMS] })}
+                  >{t(locale, "resetCanvasLauncher")}</CanvasMenuRow>
+                </div>
+              </SettingGroup>
+              <SettingGroup
+                layout="stacked"
                 label={t(locale, "homeLauncherAgents")}
                 description={t(locale, "homeLauncherAgentsDescription")}
               >
@@ -453,6 +581,7 @@ export function SettingsPanel({
                 </div>
               </SettingGroup>
               <SettingGroup
+                layout="stacked"
                 label={t(locale, "homeLimitProviders")}
                 description={t(locale, "homeLimitProvidersDescription")}
               >
@@ -743,7 +872,8 @@ export function SettingsPanel({
             />
           )}
 
-          {section === "about" && <AboutSettings locale={locale} />}
+            {section === "about" && <AboutSettings locale={locale} />}
+          </div>
         </div>
       </aside>
     </div>
@@ -965,17 +1095,21 @@ function PlacementChoices({
 function SettingGroup({
   label,
   description,
+  layout = "field",
   children
 }: {
   label: string;
   description?: string;
+  layout?: "field" | "stacked";
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <section className="setting-group">
-      <h3>{label}</h3>
-      {description && <p className="setting-group__description">{description}</p>}
-      {children}
+    <section className={`setting-group setting-group--field${layout === "stacked" ? " setting-group--stacked" : ""}`}>
+      <div className="setting-group__copy">
+        <h3>{label}</h3>
+        {description && <p className="setting-group__description">{description}</p>}
+      </div>
+      <div className="setting-group__control">{children}</div>
     </section>
   );
 }

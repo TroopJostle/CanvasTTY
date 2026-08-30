@@ -507,7 +507,7 @@ export function HomeZone({
             title={t(locale, "browser")}
             aria-label={t(locale, "browser")}
           >
-            <UiIcon name="browser" size={42} />
+            <UiIcon name="browser" size="3.23em" />
           </button>
         </section>
       );

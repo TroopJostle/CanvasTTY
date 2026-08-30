@@ -9,7 +9,7 @@ interface CanvasRegionCardProps {
   snapEnabled: boolean;
   snapTargets: readonly SessionBounds[];
   onBoundsChange(id: string, bounds: SessionBounds, interaction: "move" | "resize"): void;
-  onEdit(region: CanvasRegion, point: Point): void;
+  onMovePreview(id: string, bounds: SessionBounds | null): void;
 }
 
 interface DragState {
@@ -30,7 +30,7 @@ export function CanvasRegionCard({
   snapEnabled,
   snapTargets,
   onBoundsChange,
-  onEdit
+  onMovePreview
 }: CanvasRegionCardProps): React.JSX.Element {
   const initialBounds = { position: region.position, size: region.size };
   const [bounds, setBounds] = useState<SessionBounds>(initialBounds);
@@ -59,6 +59,7 @@ export function CanvasRegionCard({
       startClient: { x: event.clientX, y: event.clientY },
       startBounds: liveBounds.current
     };
+    onMovePreview(region.id, liveBounds.current);
   };
 
   const drag = (event: React.PointerEvent<HTMLButtonElement>): void => {
@@ -68,10 +69,12 @@ export function CanvasRegionCard({
       x: state.startBounds.position.x + (event.clientX - state.startClient.x) / zoom,
       y: state.startBounds.position.y + (event.clientY - state.startClient.y) / zoom
     };
-    applyBounds({
+    const next = {
       position: snapEnabled ? snapMove(rawPosition, state.startBounds.size, snapTargets) : rawPosition,
       size: state.startBounds.size
-    });
+    };
+    applyBounds(next);
+    onMovePreview(region.id, next);
   };
 
   const endDrag = (event: React.PointerEvent<HTMLButtonElement>): void => {
@@ -80,6 +83,7 @@ export function CanvasRegionCard({
     event.stopPropagation();
     dragState.current = null;
     onBoundsChange(region.id, liveBounds.current, "move");
+    onMovePreview(region.id, null);
   };
 
   const startResize = (event: React.PointerEvent<HTMLDivElement>, direction: ResizeDirection): void => {
@@ -130,17 +134,13 @@ export function CanvasRegionCard({
   return (
     <article
       className="canvas-region"
+      data-canvas-region-id={region.id}
       style={{
         width: bounds.size.width,
         height: bounds.size.height,
         transform: `translate(${bounds.position.x}px, ${bounds.position.y}px)`,
         "--canvas-region-color": region.color
       } as React.CSSProperties}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onEdit(region, { x: event.clientX, y: event.clientY });
-      }}
     >
       <button
         className="canvas-region__title"
@@ -150,7 +150,6 @@ export function CanvasRegionCard({
         onPointerMove={drag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        onDoubleClick={(event) => onEdit(region, { x: event.clientX, y: event.clientY })}
       >{region.title}</button>
       {RESIZE_DIRECTIONS.map((direction) => (
         <div

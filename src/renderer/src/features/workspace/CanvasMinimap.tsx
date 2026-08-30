@@ -9,7 +9,8 @@ import type {
   PluginCanvasInstance,
   SessionBounds,
   SessionSnapshot,
-  Size
+  Size,
+  StickyNote
 } from "../../../../shared/contracts";
 import { t } from "../../lib/i18n";
 import {
@@ -28,6 +29,7 @@ interface CanvasMinimapProps {
   homeBounds: SessionBounds;
   canvasRegions: readonly CanvasRegion[];
   sessions: readonly SessionSnapshot[];
+  stickyNotes: readonly StickyNote[];
   pluginCanvas: readonly PluginCanvasInstance[];
   browserCanvas: BrowserCanvasState | null;
   locale: LocaleId;
@@ -37,8 +39,15 @@ interface CanvasMinimapProps {
 
 interface MinimapEntity {
   id: string;
-  kind: "terminal" | "plugin" | "browser";
+  kind: "terminal" | "plugin" | "browser" | "note";
   bounds: SessionBounds;
+}
+
+interface MinimapDragState {
+  pointerId: number;
+  startClient: { x: number; y: number };
+  startCamera: CameraState;
+  moved: boolean;
 }
 
 export function CanvasMinimap({
@@ -47,6 +56,7 @@ export function CanvasMinimap({
   homeBounds,
   canvasRegions,
   sessions,
+  stickyNotes,
   pluginCanvas,
   browserCanvas,
   locale,
@@ -55,7 +65,7 @@ export function CanvasMinimap({
 }: CanvasMinimapProps): React.JSX.Element {
   const surface = useRef<HTMLSpanElement>(null);
   const cameraRef = useRef(camera);
-  const dragPointer = useRef<{ clientX: number; clientY: number } | null>(null);
+  const dragState = useRef<MinimapDragState | null>(null);
   const [viewportSize, setViewportSize] = useState<Size>({ width: 1, height: 1 });
   cameraRef.current = camera;
 
@@ -94,9 +104,10 @@ export function CanvasMinimap({
   );
   const entities = useMemo<MinimapEntity[]>(() => [
     ...sessions.map((session) => ({ id: session.id, kind: "terminal" as const, bounds: session })),
+    ...stickyNotes.map((note) => ({ id: note.id, kind: "note" as const, bounds: note })),
     ...pluginCanvas.map((instance) => ({ id: instance.id, kind: "plugin" as const, bounds: instance })),
     ...(browserCanvas ? [{ id: "browser", kind: "browser" as const, bounds: browserCanvas }] : [])
-  ], [browserCanvas, pluginCanvas, sessions]);
+  ], [browserCanvas, pluginCanvas, sessions, stickyNotes]);
 
   const applyCamera = (next: CameraState): void => {
     cameraRef.current = next;
@@ -120,21 +131,28 @@ export function CanvasMinimap({
     });
   };
 
-  const dragNavigate = (clientX: number, clientY: number): void => {
-    const previous = dragPointer.current;
+  const dragNavigate = (pointerId: number, clientX: number, clientY: number): void => {
+    const state = dragState.current;
     const element = surface.current;
-    if (!previous || !element) return;
+    if (!state || state.pointerId !== pointerId || !element) return;
     const bounds = element.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
+    const pointerDelta = {
+      x: clientX - state.startClient.x,
+      y: clientY - state.startClient.y
+    };
+    if (!state.moved) {
+      if (Math.abs(pointerDelta.x) <= 3 && Math.abs(pointerDelta.y) <= 3) return;
+      state.moved = true;
+    }
     const next = minimapCameraForPointerDrag(
       interactionMode,
-      cameraRef.current,
-      { x: clientX - previous.clientX, y: clientY - previous.clientY },
+      state.startCamera,
+      pointerDelta,
       { width: bounds.width, height: bounds.height },
       worldBounds
     );
     if (!next) return;
-    dragPointer.current = { clientX, clientY };
     applyCamera(next);
   };
 
@@ -152,24 +170,29 @@ export function CanvasMinimap({
         event.stopPropagation();
         if (interactionMode === "drag") {
           event.currentTarget.setPointerCapture(event.pointerId);
-          dragPointer.current = { clientX: event.clientX, clientY: event.clientY };
+          dragState.current = {
+            pointerId: event.pointerId,
+            startClient: { x: event.clientX, y: event.clientY },
+            startCamera: cameraRef.current,
+            moved: false
+          };
         } else {
-          dragPointer.current = null;
+          dragState.current = null;
+          navigate(event.clientX, event.clientY);
         }
-        navigate(event.clientX, event.clientY);
       }}
       onPointerMove={(event) => {
         if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-        dragNavigate(event.clientX, event.clientY);
+        dragNavigate(event.pointerId, event.clientX, event.clientY);
       }}
       onPointerUp={(event) => {
-        dragPointer.current = null;
+        dragState.current = null;
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
       }}
       onPointerCancel={(event) => {
-        dragPointer.current = null;
+        dragState.current = null;
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }

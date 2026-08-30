@@ -19,6 +19,33 @@ export type MinimapInteractionMode = "click" | "drag";
 export type BrowserViewportSurface = "native" | "placeholder" | "hidden";
 export type FocusActivation = "off" | "single" | "double";
 export type ShortcutAction = "home" | "renameWindow";
+export type CanvasLauncherItemId = ProviderId;
+
+export const CANVAS_LAUNCHER_ITEMS: readonly CanvasLauncherItemId[] = [
+  "codex",
+  "claude",
+  "qwen",
+  "kimi",
+  "opencode",
+  "hermes",
+  "grok",
+  "terminal"
+];
+
+// Keeps the safe provider subset proposed by @TroopJostle in PR #23 while
+// region, note, Browser, and Settings remain fixed top-level menu actions.
+export const DEFAULT_CANVAS_LAUNCHER_ITEMS: readonly CanvasLauncherItemId[] = [
+  "codex",
+  "claude",
+  "qwen",
+  "opencode",
+  "terminal"
+];
+
+export const UI_SCALE_MIN = 0.85;
+export const UI_SCALE_MAX = 1.25;
+export const UI_SCALE_STEP = 0.05;
+export const DEFAULT_UI_SCALE = 1;
 
 export interface HomeAccentColors {
   clock: string;
@@ -107,6 +134,15 @@ export interface SessionBounds {
   size: Size;
 }
 
+export interface StickyNote extends SessionBounds {
+  id: string;
+  text: string;
+}
+
+export const STICKY_NOTE_MIN_SIZE: Size = { width: 180, height: 140 };
+export const STICKY_NOTE_MAX_SIZE: Size = { width: 1_000, height: 800 };
+export const STICKY_NOTE_DEFAULT_SIZE: Size = { width: 300, height: 220 };
+
 export interface CameraState extends Point {
   zoom: number;
 }
@@ -114,13 +150,17 @@ export interface CameraState extends Point {
 export interface AppSettings {
   locale: LocaleId;
   restoreTerminalSessions: boolean;
+  persistCanvasRegions: boolean;
+  persistStickyNotes: boolean;
   palette: PaletteId;
   homeAccentPreset: HomeAccentPresetId;
   homeAccentColors: HomeAccentColors;
   sessionRowColorMode: SessionRowColorMode;
   homeLauncherProviders: AgentProviderId[];
   homeLimitProviders: LimitProviderId[];
+  canvasLauncherItems: CanvasLauncherItemId[];
   agentLifecycleHooksEnabled: boolean;
+  uiScale: number;
   canvasColor: CanvasColorId;
   pattern: CanvasPatternId;
   snapToGrid: boolean;
@@ -149,6 +189,7 @@ export interface AppSettings {
   homeGridSize: HomeGridSize;
   homeLayout: HomeWidgetPlacement[];
   canvasRegions: CanvasRegion[];
+  stickyNotes: StickyNote[];
   pluginCanvas: PluginCanvasInstance[];
   browserCanvas: BrowserCanvasState | null;
   browserAgentAccess: boolean;

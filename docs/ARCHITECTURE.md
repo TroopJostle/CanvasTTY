@@ -36,7 +36,7 @@ Electron main process
 - `src/main/ipc/registerIpc.ts` owns native side effects and validates access to persisted media.
 - `src/main/services/TerminalManager.ts` is the source of truth for live session state and PTY buffers. It keeps scrollback in a bounded chunk buffer and coalesces PTY data into 16ms IPC batches so clear/redraw sequences reach xterm together. A plain terminal starts `idle`; an agent stays `unavailable` until its provider emits a machine-readable lifecycle signal. Codex, Claude Code, Qwen Code, Kimi Code, OpenCode, Hermes, and Grok Build then transition through `idle`, `working`, and `needs_approval` from provider hooks; exact Claude/Qwen OSC 0/2 markers remain a compatibility fallback. Human-readable terminal text and PTY existence are never treated as activity. Process exit provides only `done` or `failed`. An exited PTY may be restarted under the same session ID while preserving its card, bounds, title, and scrollback. Optional restart persistence writes only provider/profile/title/cwd/bounds descriptors through `TerminalSessionStore`; it never writes PTY scrollback, child environment, or capabilities. Restored agents use each provider's native project-scoped continue mode, while plain terminals reopen as fresh shells in their saved folder.
 - `src/main/services/LimitsService.ts` reads Codex through the installed CLI's app-server protocol and Claude, Kimi, OpenCode Go, and Grok Build through their provider usage or billing endpoints. Qwen Code is multi-provider and exposes no provider-neutral read-only quota protocol, so its adapter reports `cli-not-found` or `unsupported-protocol` and never invents percentages. Provider credentials are read only inside the trusted main process, sent only to the matching provider over HTTPS, and never logged or exposed over IPC. The service owns timeout, structural normalization, caching, stale fallback, and subprocess cleanup; raw provider responses never cross IPC.
-- `src/main/services/SettingsStore.ts` normalizes every update and persists through a serialized atomic write.
+- `src/main/services/SettingsStore.ts` normalizes every update and persists through a serialized atomic write. Canvas regions and sticky notes have independent persistence gates: disabling one keeps its live objects for the current process but omits that collection from the disk snapshot and therefore from the next launch. The configurable canvas launcher and UI scale use the same boundary; transient window stacking does not.
 - `src/main/services/PluginManager.ts` installs ready-to-run repositories without executing package scripts during install/update, rejects symlinks and oversized packages, persists the enabled registry, serves only contained package files, and enforces per-plugin permissions/storage quotas. Optional native agent-hook entries remain off by default; explicit per-hook trust is persisted in the plugin registry and compiled into a separate private atomic runtime registry. Update, module replacement, plugin disable, and uninstall revoke that trust before executable files change.
 - `src/main/services/PluginSecretsService.ts` serializes per-plugin secret writes, encrypts the complete bounded payload through Electron `safeStorage`, rejects plaintext-only backends, and removes each encrypted file on uninstall.
 - `src/main/services/PluginMediaService.ts` persists per-plugin grants only after a native folder choice, hides absolute paths, skips symlinks, and serves contained audio with HTTP Range semantics. Playlist reads stay inside granted libraries; writes are bounded and atomic under the library's `Playlists/` directory.
@@ -55,7 +55,7 @@ Runtime plugin code is never imported into main or the trusted renderer bundle. 
 
 Plugin music access is capability-based rather than generic filesystem access. Media scans return library IDs, relative paths, metadata, and `canvastty-media://` stream URLs; raw playlist text remains the only format-neutral file content exposed. A media URL is resolved only for the owning enabled plugin and only beneath a previously selected library root. Removing a plugin revokes its persisted folder grants.
 
-The built-in browser is split across surfaces: `BrowserCard` renders trusted window chrome, tabs, navigation, agent badges, downloads, dialogs, and canvas geometry, while `BrowserService` positions the active native view over the measured viewport. The native view remains live while the card or camera moves and receives frame-coalesced geometry updates; it is hidden only during semantic summary, HOME editing, or trusted modal surfaces. Fractional renderer bounds expand to enclosing device-independent pixels, and the active tab view is reparented only when the active tab actually changes. A typed pointer bridge reports native-page click and hover activity back to canvas selection and explicitly restores native page focus without preventing page input. A transparent trusted mouse-passthrough window draws optional live agent cursors above the native view; Wayland uses an isolated-world fallback. A connection or heartbeat alone never creates presence: badges appear only after an actual browser command, and cursors appear only after a real pointer position exists.
+The built-in browser is split across surfaces: `BrowserCard` renders trusted window chrome, tabs, navigation, agent badges, downloads, dialogs, and canvas geometry, while `BrowserService` positions the active native view over the measured viewport. The native view remains live while the card or camera moves and receives frame-coalesced geometry updates; it is hidden during semantic summary, HOME editing, trusted modal surfaces, or while a higher canvas layer overlaps its card, so native content cannot break the renderer-owned window stack. Fractional renderer bounds expand to enclosing device-independent pixels, and the active tab view is reparented only when the active tab actually changes. A typed pointer bridge reports native-page click and hover activity back to canvas selection and explicitly restores native page focus without preventing page input. A transparent trusted mouse-passthrough window draws optional live agent cursors above the native view; Wayland uses an isolated-world fallback. A connection or heartbeat alone never creates presence: badges appear only after an actual browser command, and cursors appear only after a real pointer position exists.
 
 Renderer IPC and the agent gateway call the same `BrowserCore.execute(actor, command, signal)` boundary. Reads may run concurrently. Mutations are ordered FIFO per tab while different tabs remain independent; a repeated mutation request ID returns the recorded result. Navigation and document changes advance the revision, so stale accessibility refs fail before side effects. Agent activity is recorded as a redacted append-only hash chain: typed/page text, screenshots, URL query/fragment, credentials, headers, cookies, and tokens are not stored.
 
@@ -65,17 +65,20 @@ Renderer IPC and the agent gateway call the same `BrowserCore.execute(actor, com
 
 ```text
 App
-├── WorkspaceCanvas        camera, pan, zoom, spatial composition
+├── WorkspaceCanvas        camera, pan, zoom, spatial composition, context dispatch, and stacking
 │   ├── HomeZone           persisted resizable grid, visible boundary, and edit gestures
 │   │   ├── homeModel      pure derivation of limit/active-session rows
 │   │   └── HomeMediaWidget independent pick/replace/remove control
 │   ├── TerminalCard       one live xterm view, selection, rename, drag, resize, and snap behavior
 │   ├── CanvasRegion       persisted named color field, drag/resize, and spatial window grouping
+│   ├── StickyNoteCard     persisted text/bounds with drag, eight-way resize, and deferred text writes
+│   ├── CanvasContextMenu  target-specific empty-canvas, region, and note commands
+│   ├── CanvasCommandPalette searchable sessions and the same global creation/launch actions
 │   ├── PluginCanvasCard   sandboxed plugin app with canvas bounds and semantic summary
 │   ├── BrowserCard        trusted browser chrome and canvas geometry for the native WebContentsView
-│   └── CanvasMinimap      viewport/entity overview and camera recentering
+│   └── CanvasMinimap      viewport/entity overview, camera recentering, and canvas-direction drag panning
 ├── AgentLaunchDialog      fixed provider + folder + profile + launch
-└── SettingsPanel          General, Appearance, Agents, Controls, Browser, Plugins, and About
+└── SettingsPanel          two-pane icon-sidebar modal for General, Appearance, Agents, Controls, Browser, Plugins, and About
     ├── AgentHooksSettings built-in status revocation and explicit plugin-hook trust
     ├── AboutSettings      app identity and expandable hook/data/security FAQ
     └── PluginSettingsSection install preview, permissions, registry, and contributions
@@ -83,9 +86,11 @@ App
 
 Keep domain decisions in pure selectors such as `homeModel.ts`, orchestration in `App.tsx`, and rendering/local interaction in feature components. IPC calls belong in `App.tsx` or a feature that exclusively owns that capability.
 
+`WorkspaceCanvas` is the sole trusted owner of canvas context-menu hit testing. It leaves terminal, Browser, plugin, and editable-text context menus native. It also owns one deterministic layer order for terminal, plugin, Browser, and note cards: every ordinary primary-pointer activation raises the hit card independently of camera-focus settings. Browser native-pointer callbacks enter the same path.
+
 ## Session flow
 
-When terminal restore is enabled, startup loads validated window descriptors before the renderer and relaunches each saved agent through its provider's native continue mode. Stable CanvasTTY session IDs preserve card identity, while region membership remains a spatial center-in-region rule. Grok restoration still waits for the renderer-measured xterm grid before spawning. Turning restore off clears the descriptor store immediately; it remains off by default.
+When terminal restore is enabled, startup loads validated window descriptors before the renderer and relaunches each saved agent through its provider's native continue mode. Stable CanvasTTY session IDs preserve card identity, while region membership remains spatial and requires the complete card bounds to be inside the region at region-drag start. Grok restoration still waits for the renderer-measured xterm grid before spawning. Turning restore off clears the descriptor store immediately; it remains off by default.
 
 1. Home requests a terminal or opens a provider-specific launch card.
 2. `App` sends a typed `terminal:create` request.

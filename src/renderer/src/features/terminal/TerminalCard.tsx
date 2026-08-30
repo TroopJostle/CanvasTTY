@@ -41,6 +41,7 @@ interface TerminalCardProps {
   locale: LocaleId;
   palette: PaletteId;
   zoom: number;
+  stackIndex: number;
   snapEnabled: boolean;
   focusActivation: FocusActivation;
   invertTerminalWheel: boolean;
@@ -78,6 +79,7 @@ export function TerminalCard({
   locale,
   palette,
   zoom,
+  stackIndex,
   snapEnabled,
   focusActivation,
   invertTerminalWheel,
@@ -399,6 +401,7 @@ export function TerminalCard({
     <article
       className={`terminal-card terminal-card--${session.provider} ${summaryMode ? "terminal-card--summary" : ""} ${selected ? "terminal-card--selected" : ""}`}
       data-interactive="true"
+      data-canvas-layer-id={`terminal:${session.id}`}
       data-canvas-widget-id={terminalCanvasWidgetId(session.id)}
       data-canvas-widget-focusable="true"
       data-canvas-zoom-surface="application"
@@ -415,6 +418,7 @@ export function TerminalCard({
       style={{
         width: size.width,
         height: size.height,
+        zIndex: stackIndex,
         transform: `translate(${position.x}px, ${position.y}px)`,
         "--summary-scale": summaryScale,
         "--summary-content-width": `${Math.max(0, (size.width - 72) / summaryScale)}px`,
@@ -468,10 +472,10 @@ export function TerminalCard({
               title={`${t(locale, "restartSession")} · Ctrl+D`}
               aria-label={t(locale, "restartSession")}
             >
-              <UiIcon name={restarting ? "working" : "reload"} size={16} />
+              <UiIcon name={restarting ? "working" : "reload"} size="1.23em" />
             </button>
           )}
-          <button className="terminal-card__action terminal-card__action--close" type="button" onClick={() => onDispose(session.id)} title={t(locale, "close")} aria-label={t(locale, "close")}><UiIcon name="close" size={16} /></button>
+          <button className="terminal-card__action terminal-card__action--close" type="button" onClick={() => onDispose(session.id)} title={t(locale, "close")} aria-label={t(locale, "close")}><UiIcon name="close" size="1.23em" /></button>
         </div>
       </header>
       <div className="terminal-card__surface" ref={terminalHost} />

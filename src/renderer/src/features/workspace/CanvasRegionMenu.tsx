@@ -1,27 +1,28 @@
 import { useEffect, useState } from "react";
 import type { LocaleId, Point } from "../../../../shared/contracts";
 import { t } from "../../lib/i18n";
+import { CanvasMenuLabel } from "../../components/CanvasMenuPrimitives";
 import { CANVAS_REGION_COLORS } from "./canvasRegions";
 
 interface CanvasRegionMenuProps {
   mode: "create" | "edit";
+  focus: "title" | "color";
   position: Point;
   initialTitle: string;
   initialColor: string;
   locale: LocaleId;
   onSubmit(title: string, color: string): void;
-  onDelete?(): void;
   onClose(): void;
 }
 
 export function CanvasRegionMenu({
   mode,
+  focus,
   position,
   initialTitle,
   initialColor,
   locale,
   onSubmit,
-  onDelete,
   onClose
 }: CanvasRegionMenuProps): React.JSX.Element {
   const [title, setTitle] = useState(initialTitle);
@@ -34,7 +35,7 @@ export function CanvasRegionMenu({
 
   return (
     <form
-      className="canvas-region-menu"
+      className="canvas-region-editor"
       data-interactive="true"
       style={{ left: position.x, top: position.y }}
       onContextMenu={(event) => event.preventDefault()}
@@ -49,21 +50,24 @@ export function CanvasRegionMenu({
         onClose();
       }}
     >
-      <strong>{t(locale, mode === "create" ? "createCanvasRegion" : "editCanvasRegion")}</strong>
+      <CanvasMenuLabel>
+        {t(locale, mode === "create" ? "createCanvasRegion" : "editCanvasRegion")}
+      </CanvasMenuLabel>
       <input
-        autoFocus
+        autoFocus={focus === "title"}
         maxLength={80}
         value={title}
         aria-label={t(locale, "canvasRegionName")}
         placeholder={t(locale, "canvasRegionName")}
         onChange={(event) => setTitle(event.currentTarget.value)}
       />
-      <div className="canvas-region-menu__colors" aria-label={t(locale, "canvasRegionColor")}>
+      <div className="canvas-region-editor__colors" aria-label={t(locale, "canvasRegionColor")}>
         {CANVAS_REGION_COLORS.map((value) => (
           <button
-            className={value === color ? "canvas-region-menu__color canvas-region-menu__color--selected" : "canvas-region-menu__color"}
+            className={value === color ? "canvas-region-editor__color canvas-region-editor__color--selected" : "canvas-region-editor__color"}
             type="button"
             key={value}
+            autoFocus={focus === "color" && value === initialColor}
             style={{ background: value }}
             aria-label={value}
             aria-pressed={value === color}
@@ -71,14 +75,9 @@ export function CanvasRegionMenu({
           />
         ))}
       </div>
-      <div className="canvas-region-menu__actions">
-        {mode === "edit" && onDelete && (
-          <button className="canvas-region-menu__delete" type="button" onClick={onDelete}>
-            {t(locale, "deleteCanvasRegion")}
-          </button>
-        )}
+      <div className="canvas-region-editor__actions">
         <button type="button" onClick={onClose}>{t(locale, "cancel")}</button>
-        <button className="canvas-region-menu__primary" type="submit" disabled={title.trim().length === 0}>
+        <button className="canvas-region-editor__primary" type="submit" disabled={title.trim().length === 0}>
           {t(locale, mode === "create" ? "create" : "save")}
         </button>
       </div>

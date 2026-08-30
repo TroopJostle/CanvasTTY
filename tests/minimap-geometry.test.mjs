@@ -85,7 +85,7 @@ test("HOME and windows are allowed to leave instead of sticking to a clamped edg
   assert.equal(minimapAreaForBounds(home, world), null);
 });
 
-test("pointer movement changes the camera only in minimap drag mode", () => {
+test("minimap drag follows the same grab direction as empty-canvas drag", () => {
   const camera = { x: 100, y: 200, zoom: 0.5 };
   const pointerDelta = { x: 17.2, y: 10.4 };
   const surfaceSize = { width: 172, height: 104 };
@@ -100,7 +100,7 @@ test("pointer movement changes the camera only in minimap drag mode", () => {
   );
   const dragged = minimapCameraForPointerDrag("drag", camera, pointerDelta, surfaceSize, worldBounds);
   assert.ok(dragged);
-  assert.equal(Math.abs(dragged.x - 14) < 1e-9, true);
-  assert.equal(Math.abs(dragged.y - 148) < 1e-9, true);
+  assert.equal(Math.abs(dragged.x - 186) < 1e-9, true);
+  assert.equal(Math.abs(dragged.y - 252) < 1e-9, true);
   assert.equal(dragged.zoom, 0.5);
 });

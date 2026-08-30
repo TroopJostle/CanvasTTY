@@ -2,6 +2,16 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.5.0
+
+- Replaced competing canvas right-click handlers with one context-sensitive dispatcher. Empty canvas, color regions, and sticky notes now expose their own actions; the configurable safe agent/terminal launcher is shared with the searchable `Cmd/Ctrl+K` command palette.
+- Added sticky notes as first-class persistent canvas windows with editing, drag, eight-direction resize, snapping, deletion, deterministic region containment, and minimap markers. This work adapts and credits the original sticky-note and quick-launcher ideas from @TroopJostle's PR #23.
+- Finished color-region movement: completely contained terminals, Browser/plugin windows, and notes follow continuously during region drag and persist once at release. Region targeting, magnetic snapping, and bounds rules no longer attach partially overlapping windows or teleport them after the gesture.
+- Added ordinary click-to-front stacking for every canvas window. The native Browser surface now respects renderer-owned overlap, and launch dialogs are clamped before their first frame instead of flashing outside the application near the right edge.
+- Redesigned Settings and all canvas menus around shared application tokens, official Lucide/provider assets, and one `0.85–1.25` UI-chrome scale. Palette changes recolor menus automatically without changing canvas zoom or terminal font size.
+- Added independent General settings for saving color regions and sticky notes after exit. Disabling either keeps its live objects for the current run while omitting only that collection from the next-launch snapshot.
+- Split minimap interaction into explicit Click and Drag modes. Drag now follows empty-canvas grab direction without an initial camera jump, while a stationary press in Drag mode performs no click navigation.
+
 ## 1.3.0
 
 - Added opt-in terminal-window restoration. CanvasTTY persists only window identity, provider/profile, title, project folder, position, and size; agents resume through their native project-scoped continue mode, while PTY scrollback and capabilities remain ephemeral.

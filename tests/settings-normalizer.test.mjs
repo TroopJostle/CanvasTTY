@@ -13,6 +13,8 @@ import {
 const fallback = {
   locale: "en",
   restoreTerminalSessions: false,
+  persistCanvasRegions: true,
+  persistStickyNotes: true,
   palette: "sage",
   homeAccentPreset: "classic",
   homeAccentColors: {
@@ -25,7 +27,9 @@ const fallback = {
   sessionRowColorMode: "status",
   homeLauncherProviders: ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"],
   homeLimitProviders: ["codex", "claude", "qwen", "kimi", "opencode", "grok"],
+  canvasLauncherItems: ["codex", "claude", "qwen", "opencode", "terminal"],
   agentLifecycleHooksEnabled: true,
+  uiScale: 1,
   canvasColor: "sage",
   pattern: "dots",
   snapToGrid: true,
@@ -57,6 +61,7 @@ const fallback = {
     { widgetId: "core.settings", column: 10, row: 6, columnSpan: 2, rowSpan: 2 }
   ],
   canvasRegions: [],
+  stickyNotes: [],
   pluginCanvas: [],
   browserCanvas: null,
   browserAgentAccess: true,
@@ -132,6 +137,8 @@ test("older settings files without the new keys inherit defaults", () => {
   assert.equal(normalized.hoverFocus, fallback.hoverFocus);
   assert.equal(normalized.hoverFocusSpeed, fallback.hoverFocusSpeed);
   assert.equal(normalized.agentLifecycleHooksEnabled, true);
+  assert.equal(normalized.persistCanvasRegions, true);
+  assert.equal(normalized.persistStickyNotes, true);
 });
 
 test("preserves an explicit lifecycle hook revocation", () => {
@@ -160,6 +167,58 @@ test("terminal restore remains opt-in and canvas regions are bounded and normali
     size: { width: 360, height: 3_000 }
   }]);
   assert.equal(normalizeSettings({ restoreTerminalSessions: "yes" }, fallback).restoreTerminalSessions, false);
+});
+
+test("colored regions and notes use independent exit persistence gates", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "canvastty-settings-canvas-persistence-"));
+  const region = {
+    id: "region-persisted",
+    title: "Work",
+    color: "#AABBCC",
+    position: { x: 20, y: 30 },
+    size: { width: 500, height: 400 }
+  };
+  const note = {
+    id: "note-persisted",
+    text: "Current-session note",
+    position: { x: 60, y: 80 },
+    size: { width: 300, height: 220 }
+  };
+
+  try {
+    const store = new SettingsStore(dir, "en");
+    await store.load();
+    await store.update({ canvasRegions: [region], stickyNotes: [note] });
+
+    const liveAfterDisable = await store.update({
+      persistCanvasRegions: false,
+      persistStickyNotes: false
+    });
+    assert.deepEqual(liveAfterDisable.canvasRegions, [region]);
+    assert.deepEqual(liveAfterDisable.stickyNotes, [note]);
+
+    let persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
+    assert.equal(persisted.persistCanvasRegions, false);
+    assert.equal(persisted.persistStickyNotes, false);
+    assert.deepEqual(persisted.canvasRegions, []);
+    assert.deepEqual(persisted.stickyNotes, []);
+
+    const liveAfterRegionEnable = await store.update({ persistCanvasRegions: true });
+    assert.deepEqual(liveAfterRegionEnable.canvasRegions, [region]);
+    assert.deepEqual(liveAfterRegionEnable.stickyNotes, [note]);
+
+    persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
+    assert.deepEqual(persisted.canvasRegions, [region]);
+    assert.deepEqual(persisted.stickyNotes, []);
+
+    const restored = await new SettingsStore(dir, "en").load();
+    assert.equal(restored.persistCanvasRegions, true);
+    assert.equal(restored.persistStickyNotes, false);
+    assert.deepEqual(restored.canvasRegions, [region]);
+    assert.deepEqual(restored.stickyNotes, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("normalizes HOME accents, Canvas colors, and the expanded pattern set", () => {
@@ -308,7 +367,7 @@ test("the Qwen migration does not rerun the older expanded-limit migration", asy
     assert.deepEqual(loaded.homeLimitProviders, ["codex", "claude", "kimi"]);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 11);
+    assert.equal(persisted.settingsVersion, 13);
     assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, ["codex", "claude", "kimi"]);
   } finally {
@@ -331,7 +390,7 @@ test("the limit-display migration preserves a version-three launcher subset", as
     assert.deepEqual(loaded.homeLimitProviders, fallback.homeLimitProviders);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 11);
+    assert.equal(persisted.settingsVersion, 13);
     assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, fallback.homeLimitProviders);
   } finally {
@@ -351,7 +410,7 @@ test("the expanded limit migration preserves a curated version-four subset", asy
     assert.deepEqual(loaded.homeLimitProviders, ["kimi"]);
 
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 11);
+    assert.equal(persisted.settingsVersion, 13);
     assert.equal(persisted.agentLifecycleHooksEnabled, true);
     assert.deepEqual(persisted.homeLimitProviders, ["kimi"]);
   } finally {
@@ -421,6 +480,8 @@ test("fresh installs default to scroll pan and key-gated widget wheel input", as
     assert.equal(store.get().browserAgentAccess, true);
     assert.equal(store.get().browserShowAgentPresence, true);
     assert.equal(store.get().browserRestoreTabs, true);
+    assert.equal(store.get().persistCanvasRegions, true);
+    assert.equal(store.get().persistStickyNotes, true);
     assert.deepEqual(store.get().shortcuts, { home: "Home", renameWindow: "F2" });
     const persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
     assert.equal(Object.hasOwn(persisted, "zoomOverApplications"), false);
@@ -456,7 +517,7 @@ test("existing profiles migrate minimap interaction to click and persist later c
     const store = new SettingsStore(dir, "en");
     assert.equal((await store.load()).minimapInteractionMode, "click");
     let persisted = JSON.parse(await readFile(join(dir, "settings.json"), "utf8"));
-    assert.equal(persisted.settingsVersion, 11);
+    assert.equal(persisted.settingsVersion, 13);
     assert.equal(persisted.minimapInteractionMode, "click");
 
     await store.update({ minimapInteractionMode: "drag" });

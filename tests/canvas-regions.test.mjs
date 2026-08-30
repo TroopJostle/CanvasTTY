@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  boundsCenterInsideRegion,
+  boundsInsideRegion,
   canvasRegionAtPoint,
   constrainCanvasRegionBounds,
   translateBounds
@@ -22,15 +22,19 @@ test("a named region is centered on the canvas context-menu point", () => {
   });
 });
 
-test("window membership follows spatial containment of its center", () => {
-  assert.equal(boundsCenterInsideRegion({
+test("region membership requires the complete window to remain inside", () => {
+  assert.equal(boundsInsideRegion({
     position: { x: 180, y: 260 },
     size: { width: 700, height: 430 }
   }, region), true);
-  assert.equal(boundsCenterInsideRegion({
-    position: { x: 980, y: 740 },
+  assert.equal(boundsInsideRegion({
+    position: { x: 700, y: 260 },
     size: { width: 700, height: 430 }
   }, region), false);
+  assert.equal(boundsInsideRegion({
+    position: { x: 100, y: 200 },
+    size: { width: 960, height: 600 }
+  }, region), true);
 });
 
 test("moving a region translates contained window bounds without resizing them", () => {

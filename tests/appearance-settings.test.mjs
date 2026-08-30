@@ -71,7 +71,7 @@ test("segmented settings keep focus inside the button and separate conditional e
   const styles = readFileSync(new URL("../src/renderer/src/styles/app.css", import.meta.url), "utf8");
   assert.match(styles, /\.segmented__button\s*\{[^}]*outline:\s*0;[^}]*box-shadow\s+\.15s\s+ease/u);
   assert.match(styles, /\.segmented__button:focus-visible\s*\{[^}]*box-shadow:\s*inset\s+0\s+0\s+0\s+2px/u);
-  assert.match(styles, /\.setting-group\s*>\s*\.segmented\s*\+\s*\.shortcut-editor\s*\{[^}]*margin-top:\s*8px;/u);
+  assert.match(styles, /\.setting-group__control\s*>\s*\.segmented\s*\+\s*\.shortcut-editor\s*\{[^}]*margin-top:\s*\.6em;/u);
 });
 
 test("the HOME limits grid follows the selected provider count", () => {

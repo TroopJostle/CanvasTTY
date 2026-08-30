@@ -8,6 +8,11 @@ export const MAX_TERMINAL_SIZE: Size = { width: 1_600, height: 1_100 };
 
 export type ResizeDirection = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
 
+interface ResizeSizeLimits {
+  min: Size;
+  max: Size;
+}
+
 export function snapMove(position: Point, size: Size, targets: readonly SessionBounds[]): Point {
   const xCandidates: number[] = [];
   const yCandidates: number[] = [];
@@ -40,7 +45,8 @@ export function snapMove(position: Point, size: Size, targets: readonly SessionB
 export function snapResize(
   bounds: SessionBounds,
   direction: ResizeDirection,
-  targets: readonly SessionBounds[]
+  targets: readonly SessionBounds[],
+  limits: ResizeSizeLimits = { min: MIN_TERMINAL_SIZE, max: MAX_TERMINAL_SIZE }
 ): SessionBounds {
   let left = bounds.position.x;
   let top = bounds.position.y;
@@ -60,8 +66,8 @@ export function snapResize(
   if (direction.includes("n")) top = snapCoordinate(top, yEdges);
   if (direction.includes("s")) bottom = snapCoordinate(bottom, yEdges);
 
-  let width = clamp(right - left, MIN_TERMINAL_SIZE.width, MAX_TERMINAL_SIZE.width);
-  let height = clamp(bottom - top, MIN_TERMINAL_SIZE.height, MAX_TERMINAL_SIZE.height);
+  let width = clamp(right - left, limits.min.width, limits.max.width);
+  let height = clamp(bottom - top, limits.min.height, limits.max.height);
 
   if (direction.includes("w")) left = right - width;
   else right = left + width;

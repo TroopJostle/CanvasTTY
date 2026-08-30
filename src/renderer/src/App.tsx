@@ -22,12 +22,15 @@ import type {
   ProviderId,
   SessionBounds,
   SessionSnapshot,
+  StickyNote,
   WindowState
 } from "../../shared/contracts";
 import {
   DEFAULT_HOME_ACCENT_COLORS,
   DEFAULT_HOME_GRID_SIZE,
   DEFAULT_HOME_LAYOUT,
+  DEFAULT_CANVAS_LAUNCHER_ITEMS,
+  DEFAULT_UI_SCALE,
   DEFAULT_SHORTCUTS
 } from "../../shared/contracts";
 import { TitleBar } from "./components/TitleBar";
@@ -52,7 +55,7 @@ import {
   matchesShortcut
 } from "./lib/shortcuts";
 import { homeGridPixelSize, homeLayoutFitsGrid, placeHomeWidget } from "./features/home/homeLayout";
-import { boundsCenterInsideRegion, translateBounds } from "./features/workspace/canvasRegions";
+import { boundsInsideRegion, translateBounds } from "./features/workspace/canvasRegions";
 
 interface HomeEditDraft {
   homeGridSize: HomeGridSize;
@@ -62,13 +65,17 @@ interface HomeEditDraft {
 const FALLBACK_SETTINGS: AppSettings = {
   locale: "ru",
   restoreTerminalSessions: false,
+  persistCanvasRegions: true,
+  persistStickyNotes: true,
   palette: "sage",
   homeAccentPreset: "classic",
   homeAccentColors: { ...DEFAULT_HOME_ACCENT_COLORS },
   sessionRowColorMode: "status",
   homeLauncherProviders: ["codex", "claude", "qwen", "kimi", "opencode", "hermes", "grok"],
   homeLimitProviders: ["codex", "claude", "qwen", "kimi", "opencode", "grok"],
+  canvasLauncherItems: [...DEFAULT_CANVAS_LAUNCHER_ITEMS],
   agentLifecycleHooksEnabled: true,
+  uiScale: DEFAULT_UI_SCALE,
   canvasColor: "sage",
   pattern: "dots",
   snapToGrid: true,
@@ -97,6 +104,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   homeGridSize: { ...DEFAULT_HOME_GRID_SIZE },
   homeLayout: structuredClone(DEFAULT_HOME_LAYOUT),
   canvasRegions: [],
+  stickyNotes: [],
   pluginCanvas: [],
   browserCanvas: null,
   browserAgentAccess: true,
@@ -174,6 +182,7 @@ export function App(): React.JSX.Element {
   const browserCanvasRef = useRef<BrowserCanvasState | null>(null);
   const pluginBrowserOpenQueueRef = useRef(new PluginBrowserOpenQueue());
   const [launchProvider, setLaunchProvider] = useState<AgentProviderId | null>(null);
+  const [launchPosition, setLaunchPosition] = useState<Point | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [homeEditDraft, setHomeEditDraft] = useState<HomeEditDraft | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -317,9 +326,12 @@ export function App(): React.JSX.Element {
   const createSession = useCallback(async (
     provider: ProviderId,
     profile: LaunchProfileId,
-    cwd: string
+    cwd: string,
+    requestedCenter?: Point
   ): Promise<SessionSnapshot> => {
-    const position = nextSessionPosition(sessions.length, settings.homeGridSize);
+    const position = requestedCenter
+      ? centeredWindowPosition(requestedCenter, { width: 700, height: 430 })
+      : nextSessionPosition(sessions.length, settings.homeGridSize);
     const session = await window.canvasTTY.terminal.create({ provider, profile, cwd, position });
     setSessions((current) => upsertSnapshot(current, session));
     setActiveSessionId(session.id);
@@ -329,19 +341,24 @@ export function App(): React.JSX.Element {
     return session;
   }, [sessions.length, saveSettings, settings.homeGridSize]);
 
-  const openTerminal = useCallback(async (): Promise<void> => {
+  const openTerminal = useCallback(async (position?: Point): Promise<void> => {
     try {
-      await createSession("terminal", "normal", settings.lastDirectory);
+      await createSession("terminal", "normal", settings.lastDirectory, position);
       showToast(t(settings.locale, "terminalStarted"));
     } catch (error) {
       showToast(error instanceof Error ? error.message : t(settings.locale, "launchFailed"));
     }
   }, [createSession, settings.lastDirectory, settings.locale, showToast]);
 
+  const openAgent = useCallback((provider: AgentProviderId, position?: Point): void => {
+    setLaunchPosition(position ?? null);
+    setLaunchProvider(provider);
+  }, []);
+
   useEffect(() => window.canvasTTY.plugins.onOpenLauncher(({ provider }) => {
     if (provider === "terminal") void openTerminal();
-    else setLaunchProvider(provider);
-  }), [openTerminal]);
+    else openAgent(provider);
+  }), [openAgent, openTerminal]);
 
 
   const launchAgent = useCallback(async (
@@ -349,9 +366,10 @@ export function App(): React.JSX.Element {
     profile: LaunchProfileId,
     cwd: string
   ): Promise<void> => {
-    await createSession(provider, profile, cwd);
+    await createSession(provider, profile, cwd, launchPosition ?? undefined);
+    setLaunchPosition(null);
     showToast(`${t(settings.locale, "sessionStarted")}: ${provider}`);
-  }, [createSession, settings.locale, showToast]);
+  }, [createSession, launchPosition, settings.locale, showToast]);
 
   const restartSession = useCallback(async (id: string): Promise<void> => {
     try {
@@ -425,6 +443,32 @@ export function App(): React.JSX.Element {
     void saveSettings({ canvasRegions });
   }, [saveSettings, settings.canvasRegions]);
 
+  const createStickyNote = useCallback((note: StickyNote): void => {
+    const stickyNotes = [...settings.stickyNotes, note];
+    setSettings((current) => ({ ...current, stickyNotes }));
+    void saveSettings({ stickyNotes });
+  }, [saveSettings, settings.stickyNotes]);
+
+  const changeStickyNoteBounds = useCallback((id: string, bounds: SessionBounds): void => {
+    const stickyNotes = settings.stickyNotes.map((note) => note.id === id
+      ? { ...note, position: bounds.position, size: bounds.size }
+      : note);
+    setSettings((current) => ({ ...current, stickyNotes }));
+    void saveSettings({ stickyNotes });
+  }, [saveSettings, settings.stickyNotes]);
+
+  const changeStickyNoteText = useCallback((id: string, text: string): void => {
+    const stickyNotes = settings.stickyNotes.map((note) => note.id === id ? { ...note, text } : note);
+    setSettings((current) => ({ ...current, stickyNotes }));
+    void saveSettings({ stickyNotes });
+  }, [saveSettings, settings.stickyNotes]);
+
+  const deleteStickyNote = useCallback((id: string): void => {
+    const stickyNotes = settings.stickyNotes.filter((note) => note.id !== id);
+    setSettings((current) => ({ ...current, stickyNotes }));
+    void saveSettings({ stickyNotes });
+  }, [saveSettings, settings.stickyNotes]);
+
   const changeCanvasRegionBounds = useCallback((
     id: string,
     bounds: SessionBounds,
@@ -444,29 +488,33 @@ export function App(): React.JSX.Element {
       };
       if (delta.x !== 0 || delta.y !== 0) {
         const movedSessions = sessions.map((session) => {
-          if (!boundsCenterInsideRegion(session, previous)) return session;
+          if (!boundsInsideRegion(session, previous)) return session;
           const moved = translateBounds(session, delta);
           window.canvasTTY.terminal.setBounds(session.id, moved);
           return { ...session, ...moved };
         });
         const pluginCanvas = settings.pluginCanvas.map((instance) => {
-          if (!boundsCenterInsideRegion(instance, previous)) return instance;
+          if (!boundsInsideRegion(instance, previous)) return instance;
           const moved = translateBounds(instance, delta);
           return { ...instance, ...moved };
         });
-        const browserCanvas = settings.browserCanvas && boundsCenterInsideRegion(settings.browserCanvas, previous)
+        const browserCanvas = settings.browserCanvas && boundsInsideRegion(settings.browserCanvas, previous)
           ? translateBounds(settings.browserCanvas, delta)
           : settings.browserCanvas;
+        const stickyNotes = settings.stickyNotes.map((note) => boundsInsideRegion(note, previous)
+          ? { ...note, ...translateBounds(note, delta) }
+          : note);
         setSessions(movedSessions);
         patch.pluginCanvas = pluginCanvas;
         patch.browserCanvas = browserCanvas;
+        patch.stickyNotes = stickyNotes;
         browserCanvasRef.current = browserCanvas;
       }
     }
 
     setSettings((current) => ({ ...current, ...patch }));
     void saveSettings(patch);
-  }, [saveSettings, sessions, settings.browserCanvas, settings.canvasRegions, settings.pluginCanvas]);
+  }, [saveSettings, sessions, settings.browserCanvas, settings.canvasRegions, settings.pluginCanvas, settings.stickyNotes]);
 
   const deleteCanvasRegion = useCallback((id: string): void => {
     const canvasRegions = settings.canvasRegions.filter((region) => region.id !== id);
@@ -487,16 +535,18 @@ export function App(): React.JSX.Element {
     setCamera(focusCamera(instance.position, instance.size, PLUGIN_CANVAS_FOCUS_ZOOM));
   }, [settings.pluginCanvas]);
 
-  const openBrowser = useCallback(async (url?: string): Promise<void> => {
+  const openBrowser = useCallback(async (url?: string, requestedCenter?: Point): Promise<void> => {
     const browserApi = window.canvasTTY.browser;
     if (!browserApi) throw new Error(t(settings.locale, "browserRestartRequired"));
     const existingBrowserCanvas = browserCanvasRef.current;
     const homeSize = homeGridPixelSize(settings.homeGridSize);
     const browserCanvas = existingBrowserCanvas ?? {
-      position: {
-        x: homeSize.width + 160 + ((sessions.length + settings.pluginCanvas.length) % 2) * 760,
-        y: Math.floor((sessions.length + settings.pluginCanvas.length) / 2) * 500 + 20
-      },
+      position: requestedCenter
+        ? centeredWindowPosition(requestedCenter, { width: 920, height: 620 })
+        : {
+            x: homeSize.width + 160 + ((sessions.length + settings.pluginCanvas.length) % 2) * 760,
+            y: Math.floor((sessions.length + settings.pluginCanvas.length) / 2) * 500 + 20
+          },
       size: { width: 920, height: 620 }
     };
     const snapshot = await browserApi.open(url);
@@ -530,8 +580,8 @@ export function App(): React.JSX.Element {
     });
   }, [openBrowser, settings.locale, showToast]);
 
-  const openBrowserFromUi = useCallback((): void => {
-    void openBrowser().catch((error: unknown) => {
+  const openBrowserFromUi = useCallback((position?: Point): void => {
+    void openBrowser(undefined, position).catch((error: unknown) => {
       showToast(error instanceof Error ? error.message : t(settings.locale, "browserActionFailed"));
     });
   }, [openBrowser, settings.locale, showToast]);
@@ -904,10 +954,11 @@ export function App(): React.JSX.Element {
     [appearance.canvasColor, appearance.homeAccentPreset, settings.palette, windowState.fullscreen, windowState.isMacOS]
   );
   const rootStyle = useMemo(
-    () => appearance.homeAccentPreset === "custom"
-      ? customHomeAccentStyle(appearance.homeAccentColors)
-      : undefined,
-    [appearance.homeAccentColors, appearance.homeAccentPreset]
+    () => ({
+      ...(appearance.homeAccentPreset === "custom" ? customHomeAccentStyle(appearance.homeAccentColors) : {}),
+      "--ui-scale": settings.uiScale
+    }) as React.CSSProperties,
+    [appearance.homeAccentColors, appearance.homeAccentPreset, settings.uiScale]
   );
   const workspaceSettings = useMemo(() => homeEditDraft ? {
     ...settings,
@@ -934,8 +985,8 @@ export function App(): React.JSX.Element {
           onCameraChange={changeCamera}
           onGoHome={goHome}
           onOpenSettings={() => setSettingsOpen(true)}
-          onOpenAgent={setLaunchProvider}
-          onOpenTerminal={() => void openTerminal()}
+          onOpenAgent={openAgent}
+          onOpenTerminal={(position) => void openTerminal(position)}
           onOpenBrowser={openBrowserFromUi}
           onRequestMedia={requestMedia}
           onRemoveMedia={removeMedia}
@@ -975,13 +1026,20 @@ export function App(): React.JSX.Element {
           onChangeCanvasRegion={changeCanvasRegion}
           onCanvasRegionBoundsChange={changeCanvasRegionBounds}
           onDeleteCanvasRegion={deleteCanvasRegion}
+          onCreateStickyNote={createStickyNote}
+          onStickyNoteBoundsChange={changeStickyNoteBounds}
+          onStickyNoteTextChange={changeStickyNoteText}
+          onDeleteStickyNote={deleteStickyNote}
         />
       </main>
 
       <AgentLaunchDialog
         provider={launchProvider}
         settings={settings}
-        onClose={() => setLaunchProvider(null)}
+        onClose={() => {
+          setLaunchProvider(null);
+          setLaunchPosition(null);
+        }}
         onAcknowledge={acknowledgeDanger}
         onLaunch={launchAgent}
       />
@@ -1019,6 +1077,13 @@ function nextSessionPosition(index: number, homeGridSize: HomeGridSize): Point {
   return {
     x: homeSize.width + 160 + (index % 2) * 760,
     y: Math.floor(index / 2) * 500 + 20
+  };
+}
+
+function centeredWindowPosition(point: Point, size: { width: number; height: number }): Point {
+  return {
+    x: point.x - size.width / 2,
+    y: point.y - size.height / 2
   };
 }
 

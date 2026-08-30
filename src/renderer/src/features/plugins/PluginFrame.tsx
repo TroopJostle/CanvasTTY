@@ -178,6 +178,7 @@ export function PluginFrame({
       title={`${plugin.manifest.name}: ${contribution.title}`}
       sandbox="allow-scripts"
       referrerPolicy="no-referrer"
+      onFocus={onFocus}
       onLoad={() => {
         postToFrame(frame.current, { source: "canvastty-host", type: "context", value: context });
         postCanvasInputPolicy(frame.current, captureCanvasWheelOverWidgets);

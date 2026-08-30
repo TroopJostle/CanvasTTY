@@ -2,6 +2,16 @@
 
 [English](CHANGELOG.md) · [Русский](CHANGELOG.ru.md) · [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.5.0
+
+- 将相互竞争的画布右键处理器替换为统一的上下文分发器。空白画布、彩色区域和便签分别显示对应操作；可配置的安全智能体/终端启动器也与可搜索的 `Cmd/Ctrl+K` 命令面板共用同一套配置。
+- 便签成为一等持久化画布窗口，支持编辑、拖动、八向缩放、吸附、删除、确定性的区域归属以及小地图标记。实现改编自 @TroopJostle 在 PR #23 中提出的便签与快速启动器思路，并保留作者署名。
+- 完成彩色区域移动：完全位于区域内的终端、Browser/plugin 窗口和便签会在拖动期间同步移动，并仅在释放时持久化一次。区域 targeting、磁性吸附和边界规则不再错误捕获部分重叠窗口，也不会在手势结束后瞬移。
+- 所有画布窗口新增普通点击置顶。原生 Browser 表面现在遵循 renderer 管理的层级；靠近应用右边缘打开启动对话框时，会在首帧前完成边界限制，不再先出现在窗口外再跳回。
+- Settings 与全部画布菜单采用新设计：共享应用 token、官方 Lucide/provider 资源，以及统一的 `0.85–1.25` UI chrome 缩放。切换 palette 会自动重绘菜单，但不会改变画布 zoom 或终端字号。
+- General 中新增独立的彩色区域与便签退出后保存设置。关闭其中一项不会删除当前运行中的对象，只会从下一次启动的持久化 snapshot 中省略对应集合。
+- 小地图交互拆分为明确的 Click 与 Drag 模式。Drag 与空白画布 grab 的方向一致且不会在起始时跳转 camera；Drag 模式下静止按下不会触发 click navigation。
+
 ## 1.3.0
 
 - 新增可选的终端窗口恢复。CanvasTTY 仅保存窗口 identity、provider/profile、标题、项目目录、位置与尺寸；智能体通过各自原生的 project-scoped continue mode 继续会话，PTY scrollback 与 capability 不会持久化。

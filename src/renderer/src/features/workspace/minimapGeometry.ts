@@ -136,8 +136,8 @@ export function minimapCameraForPointerDrag(
   }
   return {
     ...camera,
-    x: camera.x - pointerDelta.x / surfaceSize.width * worldBounds.size.width * camera.zoom,
-    y: camera.y - pointerDelta.y / surfaceSize.height * worldBounds.size.height * camera.zoom
+    x: camera.x + pointerDelta.x / surfaceSize.width * worldBounds.size.width * camera.zoom,
+    y: camera.y + pointerDelta.y / surfaceSize.height * worldBounds.size.height * camera.zoom
   };
 }
 
