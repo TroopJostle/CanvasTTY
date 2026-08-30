@@ -1,7 +1,8 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import type {
   LimitProviderId,
@@ -288,7 +289,11 @@ export class LimitsService {
 
 export interface ClaudeUsageReadOptions {
   configRoot?: string;
-  keychainRequest?: () => Promise<string>;
+  environment?: Readonly<Record<string, string | undefined>>;
+  platform?: NodeJS.Platform;
+  homeDirectory?: string;
+  account?: string;
+  keychainRequest?: (service: string, account: string) => Promise<string>;
   request?: (
     url: string,
     accessToken: string,
@@ -300,8 +305,10 @@ export async function readClaudeUsage(
   clientVersion: string,
   options: ClaudeUsageReadOptions = {}
 ): Promise<unknown> {
-  const configRoot = options.configRoot ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
-  const credentials = await readClaudeCredentials(configRoot, options);
+  const environment = options.environment ?? process.env;
+  const defaultConfigRoot = join(options.homeDirectory ?? homedir(), ".claude");
+  const configRoot = (options.configRoot ?? environment.CLAUDE_CONFIG_DIR) || defaultConfigRoot;
+  const credentials = await readClaudeCredentials(configRoot, defaultConfigRoot, environment, options);
   const oauth = isRecord(credentials.claudeAiOauth) ? credentials.claudeAiOauth : null;
   const accessToken = cleanSecret(oauth?.accessToken);
   // Missing credentials describe only this runtime user; they do not prove anything about the user's plan.
@@ -315,36 +322,48 @@ export async function readClaudeUsage(
 
 async function readClaudeCredentials(
   configRoot: string,
+  defaultConfigRoot: string,
+  environment: Readonly<Record<string, string | undefined>>,
   options: ClaudeUsageReadOptions
 ): Promise<Record<string, unknown>> {
-  try {
-    return await readCredentialFile(join(configRoot, ".credentials.json"), "not-authenticated");
-  } catch (error) {
-    if (!(error instanceof LimitsAdapterError) || error.reason !== "not-authenticated") throw error;
+  if ((options.platform ?? process.platform) !== "darwin") {
+    return readCredentialFile(join(configRoot, ".credentials.json"), "not-authenticated");
   }
 
-  // Recent Claude Code builds store OAuth credentials in the macOS Keychain
-  // instead of ~/.claude/.credentials.json. An injected reader also makes this
-  // migration path testable without accessing the developer's real Keychain.
-  const keychainRequest = options.keychainRequest
-    ?? (options.configRoot === undefined && process.platform === "darwin" ? readMacOSClaudeCredentials : null);
-  if (!keychainRequest) throw new LimitsAdapterError("not-authenticated");
+  const secureStorageRoot = Object.hasOwn(environment, "CLAUDE_SECURESTORAGE_CONFIG_DIR")
+    ? environment.CLAUDE_SECURESTORAGE_CONFIG_DIR || defaultConfigRoot
+    : configRoot;
+  const service = secureStorageRoot === defaultConfigRoot
+    ? CLAUDE_KEYCHAIN_SERVICE
+    : `${CLAUDE_KEYCHAIN_SERVICE}-${createHash("sha256")
+        .update(secureStorageRoot.normalize("NFC"))
+        .digest("hex")
+        .slice(0, 8)}`;
+  const account = options.account ?? userInfo().username;
+  const keychainRequest = options.keychainRequest ?? readMacOSClaudeCredentials;
 
   try {
-    const parsed: unknown = JSON.parse(await keychainRequest());
+    const parsed: unknown = JSON.parse(await keychainRequest(service, account));
     if (!isRecord(parsed)) throw new LimitsAdapterError("protocol-error");
     return parsed;
   } catch (error) {
     if (error instanceof LimitsAdapterError) throw error;
-    throw new LimitsAdapterError("not-authenticated");
+    throw new LimitsAdapterError(keychainErrorReason(error));
   }
 }
 
-function readMacOSClaudeCredentials(): Promise<string> {
+function keychainErrorReason(error: unknown): LimitUnavailableReason {
+  if (!isRecord(error)) return "protocol-error";
+  if (error.killed === true || error.code === "ETIMEDOUT") return "timeout";
+  if (error.code === 44 || error.code === "44") return "not-authenticated";
+  return "protocol-error";
+}
+
+function readMacOSClaudeCredentials(service: string, account: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       "/usr/bin/security",
-      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
+      ["find-generic-password", "-s", service, "-a", account, "-w"],
       { encoding: "utf8", maxBuffer: MAX_LINE_BYTES, timeout: REQUEST_TIMEOUT_MS },
       (error, stdout) => {
         if (error) reject(error);
@@ -967,6 +986,7 @@ export function normalizeClaudeLimits(raw: unknown): LimitWindow[] {
       resetsAt
     }];
   });
+
 }
 
 export function normalizeKimiLimits(raw: unknown): LimitWindow[] {
