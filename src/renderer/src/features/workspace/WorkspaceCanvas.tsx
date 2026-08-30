@@ -38,7 +38,7 @@ import {
   routeCanvasContextMenu,
   type CanvasContextHit,
   type CanvasContextMenuKind
-} from "./canvasContextMenu";
+} from "./canvasContextRouting";
 import {
   CANVAS_REGION_COLORS,
   boundsInsideRegion,

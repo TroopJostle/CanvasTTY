@@ -21,7 +21,7 @@ import {
   chooseCanvasSubmenuSide,
   type CanvasContextMenuKind,
   type CanvasSubmenuSide
-} from "./canvasContextMenu";
+} from "./canvasContextRouting";
 import { CANVAS_REGION_COLORS } from "./canvasRegions";
 
 interface CanvasContextMenuProps {

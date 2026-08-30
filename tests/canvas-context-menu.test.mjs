@@ -5,7 +5,7 @@ import {
   chooseCanvasSubmenuSide,
   clampCanvasMenuPosition,
   routeCanvasContextMenu
-} from "../src/renderer/src/features/workspace/canvasContextMenu.ts";
+} from "../src/renderer/src/features/workspace/canvasContextRouting.ts";
 
 const contextMenuComponentPath = new URL(
   "../src/renderer/src/features/workspace/CanvasContextMenu.tsx",
