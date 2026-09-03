@@ -858,6 +858,9 @@ export interface CanvasTTYApi {
     readText(): Promise<string>;
     writeText(text: string): void;
   };
+  external: {
+    openUrl(url: string): Promise<void>;
+  };
   settings: {
     get(): Promise<AppSettings>;
     update(patch: Partial<AppSettings>): Promise<AppSettings>;
@@ -976,6 +979,7 @@ export interface CanvasTTYApi {
 export const IPC = {
   clipboardRead: "clipboard:read",
   clipboardWrite: "clipboard:write",
+  externalOpenUrl: "external:open-url",
   settingsGet: "settings:get",
   settingsUpdate: "settings:update",
   dialogPickDirectory: "dialog:pick-directory",

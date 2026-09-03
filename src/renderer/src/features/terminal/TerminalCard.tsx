@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import {
   INITIAL_TERMINAL_COLS,
@@ -58,6 +59,7 @@ interface TerminalCardProps {
   onBoundsChange(id: string, bounds: SessionBounds): void;
   onRestart(id: string): Promise<void>;
   onDispose(id: string): void;
+  onOpenUrl(url: string): void;
 }
 
 interface DragState {
@@ -95,10 +97,13 @@ export function TerminalCard({
   onRenameEnd,
   onBoundsChange,
   onRestart,
-  onDispose
+  onDispose,
+  onOpenUrl
 }: TerminalCardProps): React.JSX.Element {
   const terminalHost = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const onOpenUrlRef = useRef(onOpenUrl);
+  onOpenUrlRef.current = onOpenUrl;
   const renameInput = useRef<HTMLInputElement>(null);
   const renameInFlight = useRef(false);
   const suppressFocusReport = useRef(false);
@@ -152,10 +157,26 @@ export function TerminalCard({
       lineHeight: 1.2,
       scrollback: 5_000,
       allowTransparency: true,
-      theme: terminalTheme(palette)
+      theme: terminalTheme(palette),
+      // OSC 8 hyperlinks are handled by xterm itself rather than WebLinksAddon.
+      // Without an explicit handler, xterm shows its own confirm() prompt and
+      // attempts window.open(), bypassing CanvasTTY's link destination chooser.
+      linkHandler: {
+        activate: (event, uri) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpenUrlRef.current(uri);
+        }
+      }
     });
     const fitAddon = new FitAddon();
+    const webLinksAddon = new WebLinksAddon((event, uri) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenUrlRef.current(uri);
+    });
     terminal.loadAddon(fitAddon);
+    terminal.loadAddon(webLinksAddon);
     terminal.open(host);
     let lastReportedGrid = "";
     const reportGrid = (cols: number, rows: number): void => {

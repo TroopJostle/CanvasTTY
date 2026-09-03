@@ -17,6 +17,33 @@ interface AgentLaunchDialogProps {
   onLaunch(provider: AgentProviderId, profile: LaunchProfileId, cwd: string): Promise<void>;
 }
 
+export function directoryPathFromClipboard(text: string): string | null {
+  let path = text.trim();
+  if (!path) return null;
+
+  // Finder and file managers may expose copied folders as a URI list.
+  if (path.includes("\n") || path.includes("\r")) {
+    path = path.split(/\r?\n/).map((line) => line.trim()).find((line) => line && !line.startsWith("#")) ?? "";
+  }
+  if ((path.startsWith('"') && path.endsWith('"')) || (path.startsWith("'") && path.endsWith("'"))) {
+    path = path.slice(1, -1).trim();
+  }
+  if (!path) return null;
+
+  if (path.toLowerCase().startsWith("file://")) {
+    try {
+      const url = new URL(path);
+      const decodedPath = decodeURIComponent(url.pathname);
+      path = url.hostname ? `//${url.hostname}${decodedPath}` : decodedPath;
+      if (/^\/[a-zA-Z]:\//.test(path)) path = path.slice(1);
+    } catch {
+      return null;
+    }
+  }
+
+  return path || null;
+}
+
 export function AgentLaunchDialog({
   provider,
   settings,
@@ -55,7 +82,24 @@ export function AgentLaunchDialog({
 
   const chooseDirectory = async (): Promise<void> => {
     const selected = await window.canvasTTY.dialog.pickDirectory(cwd);
-    if (selected) setCwd(selected);
+    if (selected) {
+      setCwd(selected);
+      setError(null);
+    }
+  };
+
+  const pasteDirectory = async (): Promise<void> => {
+    try {
+      const path = directoryPathFromClipboard(await window.canvasTTY.clipboard.readText());
+      if (!path) {
+        setError(t(locale, "clipboardPathMissing"));
+        return;
+      }
+      setCwd(path);
+      setError(null);
+    } catch {
+      setError(t(locale, "clipboardReadFailed"));
+    }
   };
 
   const submit = async (): Promise<void> => {
@@ -88,14 +132,20 @@ export function AgentLaunchDialog({
 
         <div className="launch-dialog__top">
           <div className="launch-dialog__provider"><ProviderIcon provider={provider} size="large" /></div>
-          <button className="folder-field" type="button" onClick={() => void chooseDirectory()}>
-            <UiIcon name="folder" size={28} />
-            <span className="folder-field__copy">
-              <small>{t(locale, "projectFolder")}</small>
-              <strong title={cwd}>{cwd}</strong>
-            </span>
-            <UiIcon name="chevron" size={20} />
-          </button>
+          <div className="folder-field">
+            <button className="folder-field__picker" type="button" onClick={() => void chooseDirectory()}>
+              <UiIcon name="folder" size={28} />
+              <span className="folder-field__copy">
+                <small>{t(locale, "projectFolder")}</small>
+                <strong title={cwd}>{cwd}</strong>
+              </span>
+              <UiIcon name="chevron" size={20} />
+            </button>
+            <button className="folder-field__paste" type="button" onClick={() => void pasteDirectory()} title={t(locale, "pasteProjectPath")} aria-label={t(locale, "pasteProjectPath")}>
+              <UiIcon name="copy" size={20} />
+              <span>{t(locale, "pastePath")}</span>
+            </button>
+          </div>
         </div>
 
         <div className="profile-row">

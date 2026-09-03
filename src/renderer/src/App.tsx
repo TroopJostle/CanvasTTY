@@ -40,6 +40,7 @@ import { SettingsPanel } from "./features/settings/SettingsPanel";
 import { resolveAppearanceSettings } from "./features/settings/appearanceSettings";
 import { persistSettingsUpdate } from "./features/settings/persistSettings";
 import { PluginBrowserOpenQueue } from "./features/plugins/PluginBrowserOpenQueue";
+import { TerminalLinkDialog } from "./features/terminal/TerminalLinkDialog";
 import { WorkspaceCanvas } from "./features/workspace/WorkspaceCanvas";
 import type { LimitsLoadState } from "./features/home/homeModel";
 import { t } from "./lib/i18n";
@@ -188,6 +189,7 @@ export function App(): React.JSX.Element {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [browserSelected, setBrowserSelected] = useState(false);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [pendingTerminalUrl, setPendingTerminalUrl] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [windowState, setWindowState] = useState<WindowState>({
@@ -979,7 +981,7 @@ export function App(): React.JSX.Element {
           limitsLoadState={limitsLoadState}
           plugins={plugins}
           browser={browser}
-          browserViewVisible={!settingsOpen && launchProvider === null}
+          browserViewVisible={!settingsOpen && launchProvider === null && pendingTerminalUrl === null}
           homeEditing={homeEditDraft !== null}
           camera={camera}
           onCameraChange={changeCamera}
@@ -988,6 +990,7 @@ export function App(): React.JSX.Element {
           onOpenAgent={openAgent}
           onOpenTerminal={(position) => void openTerminal(position)}
           onOpenBrowser={openBrowserFromUi}
+          onOpenTerminalUrl={setPendingTerminalUrl}
           onRequestMedia={requestMedia}
           onRemoveMedia={removeMedia}
           onHomeLayoutChange={changeHomeLayout}
@@ -1042,6 +1045,23 @@ export function App(): React.JSX.Element {
         }}
         onAcknowledge={acknowledgeDanger}
         onLaunch={launchAgent}
+      />
+      <TerminalLinkDialog
+        locale={settings.locale}
+        url={pendingTerminalUrl}
+        onClose={() => setPendingTerminalUrl(null)}
+        onOpenCanvas={(url) => {
+          setPendingTerminalUrl(null);
+          void openBrowser(url).catch((error: unknown) => {
+            showToast(error instanceof Error ? error.message : t(settings.locale, "browserActionFailed"));
+          });
+        }}
+        onOpenExternal={(url) => {
+          setPendingTerminalUrl(null);
+          void window.canvasTTY.external.openUrl(url).catch((error: unknown) => {
+            showToast(error instanceof Error ? error.message : t(settings.locale, "browserActionFailed"));
+          });
+        }}
       />
       <SettingsPanel
         open={settingsOpen}
