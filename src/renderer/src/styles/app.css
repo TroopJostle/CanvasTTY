@@ -440,10 +440,13 @@ button { border: 0; }
 .launch-dialog__top { display: grid; grid-template-columns: 108px 1fr; gap: 14px; }
 .launch-dialog__provider { min-height: 108px; display: grid; place-items: center; border-radius: 18px; background: rgba(255,255,255,.5); }
 .launch-dialog__provider .provider-icon { width: 76px; height: 76px; }
-.folder-field { min-width: 0; padding: 18px 25px; display: grid; grid-template-columns: 34px minmax(0, 1fr) 22px; align-items: center; gap: 16px; border-radius: 18px; color: var(--text-dark); background: rgba(255,255,255,.64); cursor: pointer; text-align: left; }
+.folder-field { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; overflow: hidden; border-radius: 18px; color: var(--text-dark); background: rgba(255,255,255,.64); }
+.folder-field__picker { min-width: 0; padding: 18px 20px 18px 25px; display: grid; grid-template-columns: 34px minmax(0, 1fr) 22px; align-items: center; gap: 16px; color: inherit; background: transparent; cursor: pointer; text-align: left; }
 .folder-field__copy { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
 .folder-field small { font-size: 10px; font-weight: 900; letter-spacing: .11em; text-transform: uppercase; opacity: .58; }
 .folder-field strong { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; }
+.folder-field__paste { min-width: 100px; padding: 0 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border-left: 1px solid rgba(36,38,48,.12); color: inherit; background: rgba(255,255,255,.2); cursor: pointer; font-size: 10px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
+.folder-field__picker:hover, .folder-field__paste:hover, .folder-field__picker:focus-visible, .folder-field__paste:focus-visible { background: rgba(255,255,255,.34); }
 .profile-row { margin-top: 13px; display: grid; grid-template-columns: 1fr 1fr 96px; gap: 9px; }
 .profile-button, .launch-submit { min-height: 70px; border-radius: 16px; cursor: pointer; font-weight: 900; transition: transform .15s ease, background .15s ease; }
 .profile-button { color: var(--text-dark); background: rgba(255,255,255,.38); }
