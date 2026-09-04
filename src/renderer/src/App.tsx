@@ -33,6 +33,7 @@ import {
   DEFAULT_UI_SCALE,
   DEFAULT_SHORTCUTS
 } from "../../shared/contracts";
+import { normalizeExternalUrl } from "../../shared/externalUrl";
 import { TitleBar } from "./components/TitleBar";
 import { Toast } from "./components/Toast";
 import { AgentLaunchDialog } from "./features/launcher/AgentLaunchDialog";
@@ -990,7 +991,13 @@ export function App(): React.JSX.Element {
           onOpenAgent={openAgent}
           onOpenTerminal={(position) => void openTerminal(position)}
           onOpenBrowser={openBrowserFromUi}
-          onOpenTerminalUrl={setPendingTerminalUrl}
+          onOpenTerminalUrl={(url) => {
+            try {
+              setPendingTerminalUrl(normalizeExternalUrl(url));
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : t(settings.locale, "browserActionFailed"));
+            }
+          }}
           onRequestMedia={requestMedia}
           onRemoveMedia={removeMedia}
           onHomeLayoutChange={changeHomeLayout}

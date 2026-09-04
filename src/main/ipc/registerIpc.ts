@@ -26,7 +26,7 @@ import { normalizePluginBrowserUrl } from "../services/browser/PluginBrowserOpen
 import { PluginBrowserOpenBroker } from "./PluginBrowserOpenBroker";
 import type { GithubAuthService } from "../services/GithubAuthService";
 import type { HermesHudService } from "../services/HermesHudService";
-import { normalizeExternalUrl } from "../services/externalUrl";
+import { normalizeExternalUrl } from "../../shared/externalUrl";
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const MEDIA_MIME: Record<string, string> = {

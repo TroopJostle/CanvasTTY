@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { normalizeExternalUrl } from "../src/main/services/externalUrl.ts";
+import { normalizeExternalUrl } from "../src/shared/externalUrl.ts";
 
 const terminalCardPath = new URL("../src/renderer/src/features/terminal/TerminalCard.tsx", import.meta.url);
 const dialogPath = new URL("../src/renderer/src/features/terminal/TerminalLinkDialog.tsx", import.meta.url);
@@ -23,6 +23,7 @@ test("terminal HTTP(S) links open a Canvas or system-browser chooser", async () 
   assert.match(terminal, /onOpenUrlRef\.current\(uri\)/);
   assert.match(terminal, /linkHandler:\s*\{[\s\S]*?activate:\s*\(event, uri\)[\s\S]*?onOpenUrlRef\.current\(uri\)/);
   assert.match(workspace, /onOpenUrl=\{onOpenTerminalUrl\}/);
+  assert.match(app, /onOpenTerminalUrl=\{\(url\) => \{[\s\S]*?normalizeExternalUrl\(url\)[\s\S]*?showToast/);
   assert.match(dialog, /onOpenCanvas\(url\)/);
   assert.match(dialog, /onOpenExternal\(url\)/);
   assert.match(app, /<TerminalLinkDialog/);
