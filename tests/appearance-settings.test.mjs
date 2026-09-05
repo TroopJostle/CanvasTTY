@@ -88,6 +88,8 @@ test("four or more HOME limit rows switch to bounded compact geometry", () => {
   assert.match(styles, /\.limit-row\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;[^}]*container:\s*limit-row\s*\/\s*size;/u);
   assert.match(styles, /@container\s+limit-row\s*\(max-height:\s*48px\)/u);
   assert.match(styles, /\.limit-row\s*>\s*\.provider-icon--medium\s*\{[^}]*--provider-icon-art-size:\s*24px;[^}]*height:\s*32px;/u);
-  assert.match(styles, /\.limit-row__metric strong\s*\{[^}]*font-size:\s*22px;/u);
+  assert.match(source, /formatPercent\(row\.window\.usedPercent,\s*locale\)[\s\S]*formatResetCountdown\(row\.window\.resetsAt,\s*now,\s*locale\)/u);
+  assert.match(styles, /\.limit-row__summary strong\s*\{[^}]*font-size:\s*22px;/u);
+  assert.match(styles, /\.limit-row__summary\s*>\s*span\s*\{[^}]*font-size:\s*11px;/u);
   assert.match(styles, /\.limit-row__track\s*\{[^}]*height:\s*4px;/u);
 });

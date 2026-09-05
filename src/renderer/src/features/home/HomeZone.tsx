@@ -678,7 +678,10 @@ function LimitRow({ row, locale, now }: { row: HomeLimitRow; locale: LocaleId; n
       <ProviderIcon provider={row.provider} size="medium" />
       {row.window ? (
         <span className="limit-row__metric">
-          <strong>{formatResetCountdown(row.window.resetsAt, now, locale)}</strong>
+          <span className="limit-row__summary">
+            <strong>{formatPercent(row.window.usedPercent, locale)}</strong>
+            <span>{formatResetCountdown(row.window.resetsAt, now, locale)}</span>
+          </span>
           <span className="limit-row__track" aria-hidden="true">
             <i className="limit-row__fill" style={{ width: `${row.window.usedPercent}%` }} />
           </span>
