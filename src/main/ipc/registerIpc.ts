@@ -26,6 +26,7 @@ import { normalizePluginBrowserUrl } from "../services/browser/PluginBrowserOpen
 import { PluginBrowserOpenBroker } from "./PluginBrowserOpenBroker";
 import type { GithubAuthService } from "../services/GithubAuthService";
 import type { HermesHudService } from "../services/HermesHudService";
+import { normalizeExternalUrl } from "../../shared/externalUrl";
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const MEDIA_MIME: Record<string, string> = {
@@ -86,6 +87,10 @@ export function registerIpc({
   ipcMain.handle(IPC.clipboardRead, () => clipboard.readText());
   ipcMain.on(IPC.clipboardWrite, (_event, text: string) => {
     if (typeof text === "string" && text.length > 0) clipboard.writeText(text);
+  });
+  ipcMain.handle(IPC.externalOpenUrl, (event, value: unknown) => {
+    assertMainRenderer(event, getMainWindow);
+    return shell.openExternal(normalizeExternalUrl(value));
   });
 
   ipcMain.handle(IPC.appVersion, (event) => {
@@ -263,7 +268,7 @@ export function registerIpc({
   ));
   ipcMain.handle(IPC.pluginsOpenExternal, async (_event, pluginId: string, value: string) => {
     plugins.assertPermission(pluginId, "external:open");
-    const url = safeExternalUrl(value);
+    const url = normalizeExternalUrl(value);
     await shell.openExternal(url);
   });
   ipcMain.handle(IPC.pluginsOpenBrowser, async (event, pluginId: string, value: unknown) => {
@@ -411,7 +416,7 @@ export function registerIpc({
     }
     if (method === "external.open") {
       plugins.assertPermission(pluginId, "external:open");
-      await shell.openExternal(safeExternalUrl(values.url));
+      await shell.openExternal(normalizeExternalUrl(values.url));
       return null;
     }
     if (method === "browser.open") {
@@ -627,15 +632,6 @@ function assertMainRenderer(
   ) {
     throw new Error("Browser IPC is available only to the trusted CanvasTTY renderer.");
   }
-}
-
-function safeExternalUrl(value: unknown): string {
-  if (typeof value !== "string" || value.length > 2_048) throw new Error("External URL is invalid.");
-  const url = new URL(value);
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("Plugins may open only HTTP(S) URLs.");
-  }
-  return url.toString();
 }
 
 function safeGithubUrl(value: unknown): string {

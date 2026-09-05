@@ -114,6 +114,7 @@ interface WorkspaceCanvasProps {
   onOpenAgent(provider: AgentProviderId, position?: Point): void;
   onOpenTerminal(position?: Point): void;
   onOpenBrowser(position?: Point): void;
+  onOpenTerminalUrl(url: string): void;
   onFocusSession(session: SessionSnapshot): void;
   activeSessionId: string | null;
   browserSelected: boolean;
@@ -153,7 +154,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
   const {
     settings, mediaData, sessions, limits, limitsLoadState, plugins, browser,
     browserViewVisible, homeEditing, camera, onCameraChange, onGoHome,
-    onOpenSettings, onOpenAgent, onOpenTerminal, onOpenBrowser, onFocusSession,
+    onOpenSettings, onOpenAgent, onOpenTerminal, onOpenBrowser, onOpenTerminalUrl, onFocusSession,
     activeSessionId, browserSelected, renamingSessionId, onSelectSession,
     onSelectBrowser, onClearCanvasSelection, onRenameSession, onRenameEnd,
     onRequestMedia, onRemoveMedia, onHomeLayoutChange, onHomeGridSizeChange,
@@ -534,6 +535,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element 
               onBoundsChange={onSessionBoundsChange}
               onRestart={onRestartSession}
               onDispose={onDisposeSession}
+              onOpenUrl={onOpenTerminalUrl}
             />
           ))}
           {renderedPluginCanvas.map((instance) => {

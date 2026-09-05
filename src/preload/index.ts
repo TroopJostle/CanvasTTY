@@ -38,6 +38,9 @@ const api: CanvasTTYApi = {
     readText: () => ipcRenderer.invoke(IPC.clipboardRead),
     writeText: (text: string) => ipcRenderer.send(IPC.clipboardWrite, text)
   },
+  external: {
+    openUrl: (url: string) => ipcRenderer.invoke(IPC.externalOpenUrl, url)
+  },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),
     update: (patch: Partial<AppSettings>) => ipcRenderer.invoke(IPC.settingsUpdate, patch)
